@@ -6,9 +6,11 @@ Carpool coordination for organization events: create a trip, register drivers an
 
 ## Documentation
 
-- [Architecture and implementation roadmap](docs/ARCHITECTURE.md): scope, stack, data model, API, matching, concurrency, acceptance checks, demo target, and build order.
+- [Selected initial architecture](docs/ARCHITECTURE.md): component choices, contracts, alternatives and tradeoffs, acceptance checks, comparison experiments, and implementation roadmap.
 - [Project evidence](docs/EVIDENCE.md): required validation results, agent/human work records, two decisions, debugging case, and attribution. Fill these during development.
 - [Course specification](PROJECT_SPEC.md): supplied requirements and final acceptance checklist.
+
+The selected baseline is one Next.js application with PostgreSQL, explicit SQL transactions, and bounded min-cost flow matching. It stores server-generated previews and commits the reviewed plan by ID; roster changes invalidate the complete saved plan. Alternatives have explicit evaluation criteria and adoption triggers. Implementation and runtime validation are still pending.
 
 ## Setup and demonstration
 
