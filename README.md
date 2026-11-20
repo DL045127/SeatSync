@@ -6,6 +6,8 @@ Carpool coordination for organization events: create a trip, register drivers an
 
 ## Documentation
 
+- [Workplan and current handoff](WORKPLAN.md): start here for the next task, implementation checkpoints, release gates, and progress tracking.
+- [Agent instructions](AGENTS.md): repository conventions, verification, evidence, and handoff requirements for coding agents.
 - [Selected initial architecture](docs/ARCHITECTURE.md): component choices, contracts, alternatives and tradeoffs, acceptance checks, comparison experiments, and implementation roadmap.
 - [Project evidence](docs/EVIDENCE.md): required validation results, agent/human work records, two decisions, debugging case, and attribution. Fill these during development.
 - [Course specification](PROJECT_SPEC.md): supplied requirements and final acceptance checklist.

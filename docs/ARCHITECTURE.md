@@ -353,6 +353,8 @@ If gates fail, profile first and reduce supported roster limits consistently acr
 
 ## 9. Local operation and implementation roadmap
 
+Use [WORKPLAN.md](../WORKPLAN.md) for the current implementation handoff, detailed checkpoints, and release gates. This section retains the technical operation contract and high-level course milestones; progress is tracked in the workplan.
+
 Bind the app and mapped PostgreSQL port explicitly to `127.0.0.1`. `.env.example` documents app/demo/test database URLs with fictional credentials. Use separate demo/test databases; no real data, secrets, or database volumes in Git. Pin dependencies and use numbered, recorded SQL migrations. Test data/schema changes happen through offline setup/reset, never a mutable runtime cost table.
 
 Reset only an explicitly designated demo/test database with the app stopped; refuse other targets. Dataset changes always require this reset, including clearing global receipts. Recreate trips with fresh UUIDs so old previews/browser URLs cannot become valid against a new version-0 trip. Clear pending browser demo state as part of the intentional reset before starting a new demo. An old operation targeting a removed trip receives a finalized `404`; old creation keys have no replay guarantee across a reset. This is a local class deployment, not a production service.
@@ -371,7 +373,7 @@ Log request ID, route, trip/preview ID, expected/current version, receipt replay
 
 | Milestone | Work and exit condition |
 |---|---|
-| E0 — Contract/setup, days 1–2 | Implement/pin the selected stack, migrations and seed; initialize Git/tag the starting state; independently inspect hand fixtures and canonicalization vectors; record agent requests from the start |
+| E0 — Contract/setup, days 1–2 | Implement/pin the selected stack, migrations and seed; retain the existing Git baseline (`e2510d7`); independently inspect hand fixtures and canonicalization vectors; record agent requests from the start |
 | E1 — Complete path, days 3–7 | Pure matcher/validator/oracle; then snapshots, immutable previews, receipts and commit; minimal forms and reload recovery. Demonstrate create/register/preview/save/reload plus cancellation/rematch early. |
 | E2 — Control/evaluation, days 8–10 | Forced races, failures, UI ordering, retry recovery and directional costs; D-1/D-2/P-01 measurements; correct actual defects and preserve regression inputs and human decisions |
 | E3 — Defense, days 11–14 | Clean setup/demo, recorded outputs, real debugging case, two completed decisions, limitations and attribution; required PDFs/access/demo booking/submissions at Canvas deadlines |
