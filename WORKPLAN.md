@@ -14,29 +14,38 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 
 | Field | Current value |
 |---|---|
-| Last updated | 2026-11-20 |
+| Last updated | 2026-11-21 |
 | Implementation baseline | `e2510d7` — finalized architecture contracts; Git already exists |
-| Uncommitted handoff work | New `WORKPLAN.md` / `AGENTS.md`; navigation and provenance edits in `README.md`, `docs/ARCHITECTURE.md`, and `docs/EVIDENCE.md`. Recheck Git status on resume. |
-| Completed | Architecture, course specification, and evidence templates; this handoff and agent guidance are documentation work |
-| Runnable state | No application code, package manifest, lockfile, migrations, tests, or runnable npm scripts yet |
-| Current checkpoint | W0 — not started; no technical release gate has passed |
-| Next bounded task | Implement W0: reproducible scaffold, database/schema, immutable seed setup, and verified setup checks |
-| Environment | Node/npm/Docker availability and exact package patches have not been verified |
-| Blockers | No known design blocker; implementation and environment checks remain open |
-| Human review | Independent implementation acceptance has not occurred; course oversight records remain pending |
+| Handoff revision | Use the revision containing the W0 closeout and scaffold. `b88d98a` is the planning baseline and predates W0. |
+| Completed | W0 scaffold, package pins, Compose setup, migrations, guarded reset, seed and matching fixtures, readiness route, and setup tests. |
+| Runnable state | Lockfile and installed dependencies are present. Host install, two demo migrations, demo reset, and C-18 passed. Setup tests, lint, typecheck, and build pass. |
+| Current checkpoint | W0 and R0 passed. W1 is ready to start. |
+| Next bounded task | Implement W1: input contracts, pure matchers, feasibility validator, independent oracle, and M-01 through M-10. |
+| Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. Exact project versions are in `package.json` and `package-lock.json`. The regular macOS terminal has working registry and Docker access. |
+| Blockers | No known blocker for W1. Use the regular terminal for live database-backed HTTP checks while workspace access remains limited (ISSUE-001). |
+| Human review | The student ran C-18 and the live readiness checks. Record their overall acceptance and rationale when supplied. A-2 and the consequential human correction or redesign record remain open. |
 | External course tasks | Proposal/slide deadlines, team ownership, repository access, submission status, and demo booking are unverified; student must obtain current Canvas information |
-| Latest validation | Documentation checks passed: all 38 acceptance IDs assigned exactly once, local links resolve, fences balanced, whitespace diff clean, and course spec unchanged. No application test or benchmark results exist. |
+| Latest validation | Setup tests passed 2/2. Lint, typecheck, production build, and host C-18 passed. Host HTTP checks returned production 200, drift 503 `DATASET_MISMATCH`, and development 200 after reset. [W0 closeout](docs/EVIDENCE.md#w0-closeout) |
 
-Suggested first implementation request: **“Implement W0 from WORKPLAN.md using the selected architecture. Preserve the existing docs, verify setup against a disposable local database, record actual commands/results, and leave the next task explicit.”** This defines a bounded first task, not a claim that the commands below already work.
+A fresh checkout of the handoff should contain `package-lock.json`, `compose.yaml`, `src/app/api/health/route.ts`, `scripts/check-readiness.ts`, and the W0 closeout. If those are missing, obtain the W0 working tree or its commit before starting W1. Recreate `.env` from `.env.example` for later database work and use `npm ci` on a fresh machine. Generated `.next` files, `node_modules`, and database volumes are local. Next may rewrite `next-env.d.ts` and suggest TypeScript defaults during startup or build.
+
+Handoff verification on 2026-11-21 copied the current tracked and non-ignored untracked files to a temporary directory. With the existing installed dependencies linked in, `npm run test:setup`, `npm run typecheck`, and `npm run lint` passed without `.env` or generated `.next` files.
 
 ## Bugs and open issues
 
 Use this register for observed bugs, unresolved design questions, and environment problems that affect implementation or a release gate. Give each entry a stable ID (`ISSUE-001`, `ISSUE-002`, etc.). Routine unfinished features stay in their checkpoints; confirmed limitations belong in ARCHITECTURE and the final presentation.
 
-No implementation bugs are recorded yet; implementation has not started. Add actual issues as they are discovered.
+Add implementation bugs as they are discovered.
 
 | ID / kind | State | Summary and reproduction steps or question | Impact / affected checks or gate | Owner / next action | Resolution / evidence |
 |---|---|---|---|---|---|
+| ISSUE-001 / environment | open | `docker info` returns permission denied on the `desktop-linux` socket from the workspace session. | W0/R0 PostgreSQL startup and verification from this session | Run database checks from the regular macOS terminal or a workspace session with Docker socket access. | User confirmed `docker info` succeeds in the regular terminal. Workspace access remains open. |
+| ISSUE-002 / environment | closed | The project requires Node 24. The default shell still selects the Node 26 installation. | W0/R0 verification on the selected runtime | Prepend `$(brew --prefix node@24)/bin` to `PATH` when running project commands. | Verified `node --version` → `v24.22.3` and `npm --version` → `11.19.1` with that PATH. |
+| ISSUE-003 / environment | open | `npm ping` failed with `ENOTFOUND registry.npmjs.org` in the workspace session. | W0 dependency installation and reproducible build from this session | Run dependency installation from the regular macOS terminal or a workspace session with registry access. | User confirmed `npm ping` succeeds in the regular terminal. Workspace access remains open. |
+| ISSUE-004 / bug | open | By code inspection, a repeatable-read app request arriving after the reset session check can take its snapshot while waiting for the advisory lock. After `TRUNCATE` commits, that request can report `DATASET_MISMATCH` against a correctly reset database. | W0 readiness during startup overlapping an offline reset | Reproduce with two database clients and a barrier. Reject overlapping app requests as temporarily unavailable or take the shared lock before the read snapshot. | [Review evidence](docs/EVIDENCE.md#w0-scaffold-review) |
+| ISSUE-005 / gap | closed | C-18 exercises the validator directly. The readiness script exercises the HTTP route against the disposable test database. | W0/R0 coverage of the dataset guard | Keep the HTTP readiness check in the setup procedure. | The student's host run observed 200 ready, 503 `DATASET_MISMATCH`, and 200 ready after reset. [Readiness evidence](docs/EVIDENCE.md#w0-readiness-check) |
+| ISSUE-006 / bug | open | The transaction helper classifies every `COMMIT` exception as unknown, including an explicit database rejection that establishes rollback, such as a failed deferred constraint. | W2 transaction outcome handling | Distinguish an explicit rollback-causing server response from a lost acknowledgement and verify both cases. | [Review evidence](docs/EVIDENCE.md#w0-scaffold-review) |
+| ISSUE-007 / test failure | closed | Host C-18 expected reset to reject with an app session connected. The preceding denied `Pool.query` removed the session. | W0/R0 live C-18 gate | The fixed test keeps the app client checked out through the reset assertion. | User confirmed the corrected test passed. Host npm log confirms exit 0 at 22:02:40 local time. [Host follow-up](docs/EVIDENCE.md#w0-host-verification-follow-up) |
 
 Use states `open`, `in progress`, `needs verification`, `closed`, or `deferred`. For a bug, include starting data, steps/command, expected behavior, and actual behavior, or link to that reproduction in EVIDENCE. Label a suspected cause as a hypothesis until investigated. For a question, record the decision needed and what work depends on it.
 
@@ -52,7 +61,7 @@ Technical gates permit dependent implementation to proceed. Independent human ac
 
 | Checkpoint | Course milestone / effort target | Prerequisite | Status | Owner / verified revision / evidence |
 |---|---|---|---|---|
-| W0 — Reproducible foundation | E0 / days 1–2 | Read the selected contracts | Not started | Unassigned / none / none |
+| W0 — Reproducible foundation | E0 / days 1–2 | Read the selected contracts | Passed | Codex / W0 scaffold changes from `b88d98a` / [W0 closeout](docs/EVIDENCE.md#w0-closeout) |
 | W1 — Matching with independent answers | E1 / day 3 | W0 | Not started | Unassigned / none / none |
 | W2 — Durable mutations | E1 / days 4–5 | W0 and W1 | Not started | Unassigned / none / none |
 | W3 — Complete browser workflow | E1 / days 6–7 | W2 | Not started | Unassigned / none / none |
@@ -61,6 +70,16 @@ Technical gates permit dependent implementation to proceed. Independent human ac
 | W6 — Clean reproduction and submission | E3 / days 11–14 | W5; course tasks can proceed earlier | Not started | Unassigned / none / none |
 
 Days are effort estimates, not deadlines. Check Canvas during W0; the proposal can be due before implementation finishes. Do not wait for W6 to begin required human review, attribution, or scheduling.
+
+### Checkpoint closeout
+
+After implementing each checkpoint, update [EVIDENCE.md](docs/EVIDENCE.md) and the handoff before marking the checkpoint passed or moving to the next one. Capture evidence as it becomes available so the closeout is a short review of the existing records.
+
+- Record what changed and link the commit or current diff, relevant tests, fixtures, and outputs.
+- Record what was verified, including the starting state, command or interaction, expected result and its basis, and actual result. Carry forward failed or unrun checks and their next actions.
+- Update the agent episode and any technical decision, debugging case, attribution, or scope record that applies. Preserve the symptom, cause, fix, and rerun for a real debugging incident with potential for the final deck.
+- Record what the student independently inspected or ran and their decision and reason when supplied. Mark any outstanding human review as pending. Follow the technical gate rules above for implementation progress.
+- Link the evidence from the checkpoint row and update the gate status and next bounded task in the handoff.
 
 ### W0 — Reproducible foundation
 
@@ -75,6 +94,10 @@ Implement numbered migrations for the eight architecture tables, separate app/se
 ### W1 — Matching with independent answers
 
 **Build:** Strict shared input contracts and normalization vectors; pure greedy matcher, Bellman–Ford min-cost flow, feasibility validator, deterministic result ordering, and a separate exhaustive oracle. Respect the architecture's roster/cost bounds and active-status rules. Keep database and network code out of the matcher.
+
+**Start here:** Use [normalization and idempotency](docs/ARCHITECTURE.md#normalization-and-idempotency) for shared contracts, [pure matching](docs/ARCHITECTURE.md#pure-matching) for the algorithm and output, and [acceptance checks](docs/ARCHITECTURE.md#acceptance-checks) for M-01 through M-10. The hand-checked inputs and outcomes already live in [matching.json](tests/fixtures/matching.json). Its matrices are driver rows and passenger columns, with `null` for a missing edge and `0` for a usable zero-cost edge. WF-4's end-to-end check belongs to W3. Keep the oracle independent of flow logic and compare objective values on ties. Record the bounded W1 request under A-2 when implementation is assigned.
+
+**Test wiring:** `vitest.config.ts` currently includes only the PostgreSQL integration file. Add a database-free matching test command and select its files separately from `test:database`. W1 can be built and tested with Node 24 and installed npm dependencies. Docker and `.env` are needed for the later live database work. Leave receipt persistence, stored preview publication, and browser behavior for W2/W3. ISSUE-004 and ISSUE-006 remain tracked for database work and do not block W1.
 
 **Gate:** M-01 through M-10 pass. Hand fixtures establish M-01 = 2 matched/cost 4 and M-08 = 2/cost 3; oracle comparisons cover the retained 100 tiny seeds. Substituting greedy for the optimizer must fail M-01/M-08. Restore the real implementation after the controlled mutation and retain the observation. A student independently checks the fixture reasoning; mark that review pending until actually done.
 
@@ -130,7 +153,7 @@ Student(s) must also complete these course deliverables and records:
 
 | Release | Required observations | Current state |
 |---|---|---|
-| R0 — Setup ready | W0 passed; reproducible environment/database; actual commands in README | Not passed |
+| R0 — Setup ready | W0 passed; reproducible environment/database; actual commands in README | Passed |
 | R1 — Internal workflow demo | W0–W3 passed; success, reload, availability change, and stale-preview handling observable | Not passed |
 | R2 — Technical release candidate | W0–W5 technical checks/measurements passed; all 38 checks accounted for; evidence traceable to candidate code | Not passed |
 | R3 — Submission ready | R2 plus W6 clean reproduction, independent human acceptance, required PDFs/access/submissions/booking | Not passed |
@@ -139,11 +162,11 @@ These gates describe readiness; they do not automatically publish, deploy, or su
 
 ## Command contracts and evidence
 
-**All commands below are planned; none is currently implemented.** Add scripts only when they do real work, then document verified invocation, configuration, expected output, and actual results in README/EVIDENCE. Add focused contract, database, and reducer suites to the test configuration rather than hiding untested behavior behind one broad success message.
+README lists the existing W0 commands and distinguishes verified commands from pending checks. Later scripts are planned. Add scripts as their associated behavior is implemented and record actual verification in EVIDENCE.
 
 | Introduce by | Planned commands |
 |---|---|
-| W0 | `npm ci`; `docker compose up -d db`; `npm run db:migrate`; `npm run demo:reset`; `npm run dev`; `npm run typecheck`; `npm run lint`; `npm run build`; `npm start` |
+| W0 | `npm ci`, `docker compose up -d --wait db`, `npm run db:migrate`, `npm run demo:reset`, `npm run dev`, `npm run typecheck`, `npm run lint`, `npm run build`, `npm start`, `npm run test:setup`, `npm run test:database`, and `npm run test:readiness` |
 | W1 | `npm run test:matching`; an initial `npm run eval:matching` for solver timing |
 | W2 | `npm run test:concurrency` with the first real-PostgreSQL cases; extend it through W4 |
 | W3 | `npm run demo`; `npm run test:e2e` if browser automation is implemented, otherwise retained exact manual steps |

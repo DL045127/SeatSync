@@ -359,6 +359,8 @@ Bind the app and mapped PostgreSQL port explicitly to `127.0.0.1`. `.env.example
 
 Reset only an explicitly designated demo/test database with the app stopped; refuse other targets. Dataset changes always require this reset, including clearing global receipts. Recreate trips with fresh UUIDs so old previews/browser URLs cannot become valid against a new version-0 trip. Clear pending browser demo state as part of the intentional reset before starting a new demo. An old operation targeting a removed trip receives a finalized `404`; old creation keys have no replay guarantee across a reset. This is a local class deployment, not a production service.
 
+W0 uses `groupride_demo` and `groupride_test` on the Compose loopback port 55432. Setup checks the selected URL, connected role and database, and a bootstrap marker owned by the database administrator. Setup takes an exclusive transaction advisory lock and refuses connected app-role sessions. App transactions take the corresponding shared lock before the dataset guard and business work. The dataset lock uses PostgreSQL's two-integer lock namespace, separate from the single-bigint mutation key locks. The `/api/health` route exercises the app role and dataset guard.
+
 | Planned command | Required behavior before it appears as runnable in README |
 |---|---|
 | `npm ci`, `docker compose up -d db`, `npm run db:migrate` | Install pinned dependencies, start database, apply recorded migrations |

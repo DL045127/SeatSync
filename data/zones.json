@@ -1,0 +1,18 @@
+{
+  "zones": [
+    { "id": "north", "label": "North" },
+    { "id": "east", "label": "East" },
+    { "id": "south", "label": "South" },
+    { "id": "west", "label": "West" }
+  ],
+  "costs": [
+    { "driver_zone_id": "north", "passenger_zone_id": "north", "cost": 0 },
+    { "driver_zone_id": "north", "passenger_zone_id": "east", "cost": 7 },
+    { "driver_zone_id": "east", "passenger_zone_id": "north", "cost": 19 },
+    { "driver_zone_id": "east", "passenger_zone_id": "east", "cost": 0 },
+    { "driver_zone_id": "south", "passenger_zone_id": "south", "cost": 0 },
+    { "driver_zone_id": "south", "passenger_zone_id": "west", "cost": 2 },
+    { "driver_zone_id": "west", "passenger_zone_id": "south", "cost": 2 },
+    { "driver_zone_id": "west", "passenger_zone_id": "west", "cost": 0 }
+  ]
+}

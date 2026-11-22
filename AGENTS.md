@@ -1,6 +1,6 @@
 # Repository instructions
 
-GroupRide is a local CS 378AC carpool coordination project. The repository starts with a selected architecture and no application implementation. Verify the current tree rather than assuming that initial state still holds.
+GroupRide is a local CS 378AC carpool coordination project. The workplan records the latest verified checkpoint and where to resume.
 
 ## Orient and resume
 
@@ -27,6 +27,8 @@ GroupRide is a local CS 378AC carpool coordination project. The repository start
 - Keep app/setup credentials separate, use fictional demo data, and keep secrets/volumes out of Git. Reset only an explicitly designated local demo/test database with the app stopped, following the architecture's guards.
 
 ## Leave a useful handoff
+
+Follow the [checkpoint closeout rule](WORKPLAN.md#checkpoint-closeout) after implementing each checkpoint. Record the change, observed results, human review and decisions, and evidence links before passing the checkpoint or moving on.
 
 Update WORKPLAN's current state, affected checkpoints, actual verification, unfinished work, and next action before stopping. Put technical changes in ARCHITECTURE, results and human review in EVIDENCE, and verified commands in README. Keep these documents aligned; do not create additional planning files for the same information.
 

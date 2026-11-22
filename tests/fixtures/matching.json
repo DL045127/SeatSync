@@ -1,0 +1,22 @@
+{
+  "M-01": {
+    "capacities": [1, 1],
+    "driverRowsPassengerColumns": [[1, 2], [2, 100]],
+    "optimal": { "matched": 2, "cost": 4 },
+    "greedy": { "matched": 2, "cost": 101 },
+    "basis": "Diagonal costs 1 + 100. Cross-assignment costs 2 + 2. Both cover two riders."
+  },
+  "M-08": {
+    "capacities": [1, 1],
+    "driverRowsPassengerColumns": [[1, 1], [2, null]],
+    "optimal": { "matched": 2, "cost": 3 },
+    "greedy": { "matched": 1, "cost": 1 },
+    "basis": "Passenger B can only ride with driver 1, so full coverage requires A to ride with driver 2."
+  },
+  "WF-4": {
+    "driverZone": "north",
+    "passengerZone": "east",
+    "optimal": { "matched": 1, "cost": 7 },
+    "basis": "North to East costs 7. The reverse direction costs 19."
+  }
+}

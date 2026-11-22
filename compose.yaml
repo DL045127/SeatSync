@@ -1,0 +1,18 @@
+name: groupride
+services:
+  db:
+    image: postgres:18.7-bookworm
+    environment:
+      POSTGRES_PASSWORD: local_bootstrap
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-groupride.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+volumes:
+  db-data:
