@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**Status:** W0 setup is verified. The scaffold builds, C-18 passes on PostgreSQL, and production and development readiness checks pass. W1 is next.
+**W0 and W1 passed.** The scaffold builds, C-18 and the HTTP readiness checks passed on the host, and the student accepted the matcher and input validators. W2 begins with the shared mutation helper. [Current handoff](WORKPLAN.md)
 
 ## Documentation
 
@@ -22,6 +22,7 @@ Verified in the workspace with Node 24:
 
 ```sh
 npm run test:setup
+npm run test:matching
 docker compose config --quiet
 ```
 

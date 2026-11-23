@@ -14,20 +14,20 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 
 | Field | Current value |
 |---|---|
-| Last updated | 2026-11-21 |
+| Last updated | 2026-11-23 |
 | Implementation baseline | `e2510d7` — finalized architecture contracts; Git already exists |
-| Handoff revision | Use the revision containing the W0 closeout and scaffold. `b88d98a` is the planning baseline and predates W0. |
-| Completed | W0 scaffold, package pins, Compose setup, migrations, guarded reset, seed and matching fixtures, readiness route, and setup tests. |
-| Runnable state | Lockfile and installed dependencies are present. Host install, two demo migrations, demo reset, and C-18 passed. Setup tests, lint, typecheck, and build pass. |
-| Current checkpoint | W0 and R0 passed. W1 is ready to start. |
-| Next bounded task | Implement W1: input contracts, pure matchers, feasibility validator, independent oracle, and M-01 through M-10. |
-| Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. Exact project versions are in `package.json` and `package-lock.json`. The regular macOS terminal has working registry and Docker access. |
-| Blockers | No known blocker for W1. Use the regular terminal for live database-backed HTTP checks while workspace access remains limited (ISSUE-001). |
-| Human review | The student ran C-18 and the live readiness checks. Record their overall acceptance and rationale when supplied. A-2 and the consequential human correction or redesign record remain open. |
+| Handoff revision | W1 is an uncommitted diff on top of `fc3817a` (the W0 commit). The W0 closeout and scaffold are in `fc3817a`. |
+| Completed | W0, R0 and W1. All tracked W1 technical findings (ISSUE-008 through ISSUE-012) have verified fixes. |
+| Runnable state | Latest database-free run passed 69 matching and contract tests, 2 setup tests, lint, typecheck, and the production build on Node 24.22.3. |
+| Current checkpoint | W1 passed. W2 is ready to start. |
+| Next bounded task | Implement the W2 shared mutation helper, then the trip services, routes and real PostgreSQL checks listed below. |
+| Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. The default shell still selects Node 26, which crashes on a missing simdjson dylib (ISSUE-002); prepend `$(brew --prefix node@24)/bin` to `PATH` for all project commands. Exact project versions are in `package.json`/`package-lock.json`. |
+| Blockers | W2 implementation can start in this working tree. ISSUE-001 prevents live PostgreSQL verification in this session. Address ISSUE-006 in the W2 transaction helper. [W2 prerequisite check](docs/EVIDENCE.md#w2-prerequisite-check) |
+| Human review | The student ran C-18 and the live readiness checks. The student accepted W1 on 2026-11-23 after independently checking M-01, M-08 and the public validators. [W1 closeout](docs/EVIDENCE.md#w1-closeout) |
 | External course tasks | Proposal/slide deadlines, team ownership, repository access, submission status, and demo booking are unverified; student must obtain current Canvas information |
-| Latest validation | Setup tests passed 2/2. Lint, typecheck, production build, and host C-18 passed. Host HTTP checks returned production 200, drift 503 `DATASET_MISMATCH`, and development 200 after reset. [W0 closeout](docs/EVIDENCE.md#w0-closeout) |
+| Latest validation | Original ISSUE-009 probes passed, including equivalent fingerprints after JSON round-trip. Oracle comparison matched on seeds 0–1999. The dense benchmark matched 50 at cost 113 (p95 1.001 ms). [Closure verification](docs/EVIDENCE.md#w1-closure-verification) |
 
-A fresh checkout of the handoff should contain `package-lock.json`, `compose.yaml`, `src/app/api/health/route.ts`, `scripts/check-readiness.ts`, and the W0 closeout. If those are missing, obtain the W0 working tree or its commit before starting W1. Recreate `.env` from `.env.example` for later database work and use `npm ci` on a fresh machine. Generated `.next` files, `node_modules`, and database volumes are local. Next may rewrite `next-env.d.ts` and suggest TypeScript defaults during startup or build.
+For a W2 handoff, use this working tree or a revision containing the accepted W1 files, including `src/contracts/`, `src/matching/`, `tests/matching/`, and the updated npm scripts. A fresh checkout of `fc3817a` contains W0 only. Recreate `.env` from `.env.example` and use `npm ci` on a fresh machine. Generated `.next` files, `node_modules`, and database volumes are local.
 
 Handoff verification on 2026-11-21 copied the current tracked and non-ignored untracked files to a temporary directory. With the existing installed dependencies linked in, `npm run test:setup`, `npm run typecheck`, and `npm run lint` passed without `.env` or generated `.next` files.
 
@@ -46,6 +46,11 @@ Add implementation bugs as they are discovered.
 | ISSUE-005 / gap | closed | C-18 exercises the validator directly. The readiness script exercises the HTTP route against the disposable test database. | W0/R0 coverage of the dataset guard | Keep the HTTP readiness check in the setup procedure. | The student's host run observed 200 ready, 503 `DATASET_MISMATCH`, and 200 ready after reset. [Readiness evidence](docs/EVIDENCE.md#w0-readiness-check) |
 | ISSUE-006 / bug | open | The transaction helper classifies every `COMMIT` exception as unknown, including an explicit database rejection that establishes rollback, such as a failed deferred constraint. | W2 transaction outcome handling | Distinguish an explicit rollback-causing server response from a lost acknowledgement and verify both cases. | [Review evidence](docs/EVIDENCE.md#w0-scaffold-review) |
 | ISSUE-007 / test failure | closed | Host C-18 expected reset to reject with an app session connected. The preceding denied `Pool.query` removed the session. | W0/R0 live C-18 gate | The fixed test keeps the app client checked out through the reset assertion. | User confirmed the corrected test passed. Host npm log confirms exit 0 at 22:02:40 local time. [Host follow-up](docs/EVIDENCE.md#w0-host-verification-follow-up) |
+| ISSUE-008 / bug | closed | Impossible calendar dates silently rolled over, and English dates parsed. | W1 departure validation | Retain leap/calendar vectors. Track UTC round-trip behavior in ISSUE-012. | Fix in the W1 diff on `fc3817a` at `src/contracts/normalize.ts`. Regression suite and direct probes passed. [Technical re-review](docs/EVIDENCE.md#w1-technical-re-review) |
+| ISSUE-009 / bug | closed | Direct schema imports previously bypassed label, date, zone, or numeric normalization. | W1 shared mutation contracts and W2 request identity | Use the public normalizers in W2 routes. | Fix in the W1 diff on `fc3817a`. Reviewer reran invalid bodies, module export checks and canonical fingerprint comparisons. [Closure verification](docs/EVIDENCE.md#w1-closure-verification) |
+| ISSUE-010 / bug | closed | Array-wrapped driver ID could produce an assignment without a compatible seat. | M-09 matcher input validation | Retain type and roster-bound regressions. | Primitive-string guard in the W1 diff on `fc3817a`, `src/matching/types.ts`. Two-driver reproduction rejected with MatchInputError. [Boundary verification](docs/EVIDENCE.md#w1-boundary-verification) |
+| ISSUE-011 / coverage | closed | M-10 previously omitted the activity filter. | M-10 / M-07 projection and inactive membership | Use the verified projection when implementing the service. | Fix in the W1 diff on `fc3817a` at `src/matching/project.ts` and `tests/matching/matching.test.ts`. M-10 and direct inactive-member checks passed. [Technical re-review](docs/EVIDENCE.md#w1-technical-re-review) |
+| ISSUE-012 / bug | closed | Offset conversion could yield a UTC year the normalizer rejected on a second pass. | W1 normalized request replay | Retain upper/lower year and minute-precision regressions. | Four-digit UTC guard in the W1 diff on `fc3817a`, `src/contracts/normalize.ts`. Out-of-range instants reject on the first pass and accepted boundary bodies reparse identically. [Boundary verification](docs/EVIDENCE.md#w1-boundary-verification) |
 
 Use states `open`, `in progress`, `needs verification`, `closed`, or `deferred`. For a bug, include starting data, steps/command, expected behavior, and actual behavior, or link to that reproduction in EVIDENCE. Label a suspected cause as a hypothesis until investigated. For a question, record the decision needed and what work depends on it.
 
@@ -62,7 +67,7 @@ Technical gates permit dependent implementation to proceed. Independent human ac
 | Checkpoint | Course milestone / effort target | Prerequisite | Status | Owner / verified revision / evidence |
 |---|---|---|---|---|
 | W0 — Reproducible foundation | E0 / days 1–2 | Read the selected contracts | Passed | Codex / W0 scaffold changes from `b88d98a` / [W0 closeout](docs/EVIDENCE.md#w0-closeout) |
-| W1 — Matching with independent answers | E1 / day 3 | W0 | Not started | Unassigned / none / none |
+| W1 — Matching with independent answers | E1 / day 3 | W0 | Passed | W1 diff on `fc3817a`. Technical checks passed and the student accepted A-2 on 2026-11-23. [W1 closeout](docs/EVIDENCE.md#w1-closeout) |
 | W2 — Durable mutations | E1 / days 4–5 | W0 and W1 | Not started | Unassigned / none / none |
 | W3 — Complete browser workflow | E1 / days 6–7 | W2 | Not started | Unassigned / none / none |
 | W4 — Races and failure recovery | E2 / days 8–9 | W3 | Not started | Unassigned / none / none |

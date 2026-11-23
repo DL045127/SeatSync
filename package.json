@@ -14,7 +14,9 @@
     "demo:reset": "tsx scripts/db.ts reset",
     "test:setup": "node --test tests/setup.test.ts",
     "test:database": "vitest run --config vitest.config.ts",
-    "test:readiness": "node --import tsx scripts/check-readiness.ts"
+    "test:matching": "vitest run --config vitest.matching.config.ts",
+    "test:readiness": "node --import tsx scripts/check-readiness.ts",
+    "eval:matching": "node --import tsx scripts/eval-matching.ts"
   },
   "dependencies": {
     "next": "16.4.6",
