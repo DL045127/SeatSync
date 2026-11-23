@@ -16,18 +16,19 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 |---|---|
 | Last updated | 2026-11-24 |
 | Implementation baseline | `e2510d7` — finalized architecture contracts; Git already exists |
-| Handoff revision | W2 is committed at `eb1e864`. W3 is the uncommitted working diff on that revision. |
+| Handoff revision | W3 is committed at `9040695`, following W2 at `eb1e864`. |
 | Completed | W0 through W3 passed, along with R0 and R1. |
 | Runnable state | Verified live 2026-11-24 on the local test database: `npm run test:e2e` 12/12 (WF-1/2/3/4, U-02/U-03, three ISSUE-021 cases, four ISSUE-022 cases), `npm run test:concurrency` 36/36 (incl. 15 preview/commit with the mixed-case-UUID ISSUE-025 cases across both result fields), `npm run test:unit` 33/33, `npm run test:matching` 69/69, `npm run test:setup` 2/2, plus lint, typecheck, and the production build. |
 | Current checkpoint | W3 complete. The student accepted A-4 and R1 passed. W4 is next. |
-| Next bounded task | W4 (races and failure recovery): C-01, C-05, C-06, C-08, C-13, C-15, C-16, and the commit-version-guard mutant. The accepted W3 changes are uncommitted on `eb1e864`. |
+| Next bounded task | Start W4 with C-01 on real PostgreSQL. Two distinct keys committing the same preview must produce one success and one stale-version conflict. Confirm C-01 catches removal of the commit version guard, restore the guard, then finish the remaining [W4 checks](#w4--races-and-failure-recovery). |
+| Optional follow-up | [One-city meeting-point demo](#stretch-goal--one-city-meeting-points) after the required checkpoints, if time permits. |
 | Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. The default shell still selects Node 26, which crashes on a missing simdjson dylib (ISSUE-002); prepend `$(brew --prefix node@24)/bin` to `PATH` for all project commands. Exact project versions are in `package.json`/`package-lock.json`. |
 | Blockers | None for W3 technical progress. ISSUE-004 remains later work. |
 | Human review | The student accepted W1, reported the original W2 failure, and ran the corrected W2 suite. For A-4 the student observed matching previews across two tabs, persistence after reload and the stale-save review prompt. The student accepted W3. A-3 (W2) remains pending. [A-4 evidence](docs/EVIDENCE.md) |
 | External course tasks | Proposal/slide deadlines, team ownership, repository access, submission status, and demo booking are unverified; student must obtain current Canvas information |
 | Latest validation | Host passed 36 concurrency and 12 browser cases. Reviewer passed 33 unit, 69 matching and two setup tests, lint, typecheck and build. The preview POST handler returned 200 for both valid controls and 500 INTERNAL_ERROR for all 16 corrupt variants across the two result fields. After the fixture refinement the host reran all 36 concurrency cases. The reviewer checked sibling selection and all 13 exact corruption assertions and reran lint and typecheck. [Fifth-round verification](docs/EVIDENCE.md#w3-fifth-round-verification) |
 
-Continue from the W3 working tree on `eb1e864`, including its untracked preview/commit services and routes, browser pages and reducer, demo script, Playwright configuration, and new tests.
+The W3 commit includes the preview and commit services and routes, browser pages and reducer, demo script, Playwright configuration, and workflow tests.
 
 Handoff verification on 2026-11-21 copied the current tracked and non-ignored untracked files to a temporary directory. With the existing installed dependencies linked in, `npm run test:setup`, `npm run typecheck`, and `npm run lint` passed without `.env` or generated `.next` files.
 
@@ -82,7 +83,7 @@ Technical gates permit dependent implementation to proceed. Independent human ac
 | W0 — Reproducible foundation | E0 / days 1–2 | Read the selected contracts | Passed | Codex / W0 scaffold changes from `b88d98a` / [W0 closeout](docs/EVIDENCE.md#w0-closeout) |
 | W1 — Matching with independent answers | E1 / day 3 | W0 | Passed | W1 diff on `fc3817a`. Technical checks passed and the student accepted A-2 on 2026-11-23. [W1 closeout](docs/EVIDENCE.md#w1-closeout) |
 | W2 — Durable mutations | E1 / days 4–5 | W0 and W1 | Passed | Codex / W2 diff on `7483c57` / live 21-case suite incl. the C-17 racing-failure interleaving; ISSUE-006/014/016/019/020 closed. A-3 human review pending. [C-17 racing-failure coverage](docs/EVIDENCE.md#w2-c-17-racing-failure-coverage-closes-issue-019) |
-| W3 — Complete browser workflow | E1 / days 6–7 | W2 | Passed | Working diff on `eb1e864`. The student accepted the verified W3 workflow after checking persistence and stale-save handling in two tabs. [Fifth-round fixes](docs/EVIDENCE.md#w3-correction-review-fifth-round-of-fixes) |
+| W3 — Complete browser workflow | E1 / days 6–7 | W2 | Passed | Committed at `9040695`. The student accepted the verified W3 workflow after checking persistence and stale-save handling in two tabs. [Fifth-round fixes](docs/EVIDENCE.md#w3-correction-review-fifth-round-of-fixes) |
 | W4 — Races and failure recovery | E2 / days 8–9 | W3 | Not started | Unassigned / none / none |
 | W5 — Evaluation and scope defense | E2–E3 / day 10 | W4 | Not started | Unassigned / none / none |
 | W6 — Clean reproduction and submission | E3 / days 11–14 | W5; course tasks can proceed earlier | Not started | Unassigned / none / none |
@@ -166,6 +167,16 @@ Student(s) must also complete these course deliverables and records:
 - [ ] Rehearse the successful workflow, edge/failure case, independent expected answer, decisions, attribution, and limitation; both teammates can explain the work.
 - [ ] Confirm the repository is under a student's account, collaborators/staff have access, and prohibited homework material is absent from files and history.
 - [ ] Submit the required repository URL/PDFs, reserve the demo slot, and finish the default-branch code/writeup before Canvas's available-until deadline. Record actual confirmations, not assumptions.
+
+### Stretch goal — One-city meeting points
+
+**Optional · Not started.** W0–W6 and the release gates can all pass independently of this goal.
+
+Choose one city, one fixed event venue, and up to 16 named public meeting points. Drivers select a starting point and passengers select a pickup point. Give the organizer a reproducible offline demo using a separate city fixture loaded through the [guarded offline reset](docs/ARCHITECTURE.md#seeded-data-lifetime).
+
+For each eligible pair, estimate the extra driving minutes via the pickup point compared with driving directly from the driver's start to the venue. Record the travel-time source, date, and rounding rule with the fixture. Use the existing matcher to maximize passengers served, then minimize the sum of those individual detour estimates. Label that sum in the preview and saved plan. Street-address entry, live traffic, and multi-stop route optimization are outside this stretch goal.
+
+**Acceptance check.** Use two one-seat drivers at different starting points and two passengers at different pickup points, with two feasible pairings whose totals differ. Hand-calculate the four detours from the retained travel times before running the app. Preview the trip, save, and reload. Verify the named assignments, two matched passengers, and the lower expected total in minutes. Record the fixture, calculations, and observed browser result in [EVIDENCE.md](docs/EVIDENCE.md) when implemented.
 
 ## Release gates
 
