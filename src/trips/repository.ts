@@ -4,6 +4,15 @@
 
 import type { PoolClient } from "pg";
 
+// Test-only barrier fired inside commitPlan AFTER the assignment DELETE and
+// BEFORE the INSERT loop (C-05). The W4 suite throws a terminal failure here to
+// prove the savepoint rollback restores the deleted plan rather than leaving
+// the trip with no assignments. Production never sets it.
+let commitPlanMidHook: (() => Promise<void>) | undefined;
+export function __setCommitPlanMidHook(hook: (() => Promise<void>) | undefined): void {
+  commitPlanMidHook = hook;
+}
+
 export interface TripRow {
   id: string;
   name: string;
@@ -353,6 +362,7 @@ export async function commitPlan(
   },
 ): Promise<void> {
   await client.query("DELETE FROM assignments WHERE trip_id = $1", [params.tripId]);
+  if (commitPlanMidHook) await commitPlanMidHook();
   for (const a of params.assignments) {
     await client.query(
       `INSERT INTO assignments (trip_id, request_id, driver_id, pickup_cost, committed_version)

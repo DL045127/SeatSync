@@ -18,6 +18,17 @@ import {
 import { type AppliedResult, type MutationResponse, runKeyedMutation } from "./mutation.ts";
 import * as repo from "./repository.ts";
 
+// Test-only sensitivity mutant (C-01). When disabled, the stale-version guard
+// below is skipped, letting two commits at one input version both apply. The
+// W4 concurrency suite flips this on to prove C-01 detects the double
+// commitment, then restores the guard and asserts the normal path passes. It is
+// never toggled by production code; the symbol is prefixed `__` like the other
+// test seams (`__setFaultHook`, `__setTransactionCommitFaultHook`).
+let commitVersionGuardEnabled = true;
+export function __setCommitVersionGuardEnabled(enabled: boolean): void {
+  commitVersionGuardEnabled = enabled;
+}
+
 const requestId = () => randomUUID();
 
 export function commitPreview(
@@ -53,7 +64,7 @@ export function commitPreview(
         );
       }
       // The preview must describe the current input version.
-      if (preview.base_version !== trip.version) {
+      if (commitVersionGuardEnabled && preview.base_version !== trip.version) {
         throw new TerminalBusinessError(
           409,
           "STALE_VERSION",

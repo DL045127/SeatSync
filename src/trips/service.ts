@@ -49,6 +49,15 @@ export interface TripSnapshot {
 
 const requestId = () => randomUUID();
 
+// Test-only barrier for the dashboard snapshot read (C-08). The W4 suite
+// installs a one-shot hook that commits a cancellation after the snapshot's
+// trip-row read, then clears it. Production never sets it.
+let snapshotBarrier: () => Promise<void> = () => Promise.resolve();
+export function __setSnapshotBarrier(hook: () => Promise<void>): () => void {
+  snapshotBarrier = hook;
+  return () => { snapshotBarrier = () => Promise.resolve(); };
+}
+
 /**
  * Zone IDs come from the immutable canonical fixture, NOT a runtime SELECT
  * (ISSUE-016). A preliminary DB read could cache drifted zones before the
@@ -75,6 +84,11 @@ export async function getTripSnapshot(
     await assertDataset(client);
     const trip = await repo.readTrip(client, tripId);
     if (!trip) return undefined;
+    // Test-only barrier (C-08): fires after the trip row read, before the roster
+    // reads, so a test can commit a cancellation in between and prove the
+    // REPEATABLE READ snapshot returns an internally consistent view (never a
+    // new driver set against an old trip row). Production never sets it.
+    await snapshotBarrier();
     const [drivers, requests, assignments] = await Promise.all([
       repo.listDrivers(client, tripId),
       repo.listRequests(client, tripId),

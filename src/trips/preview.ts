@@ -29,6 +29,15 @@ import {
 } from "../matching/index.ts";
 import * as repo from "./repository.ts";
 
+// Test-only barrier for the preview stale window (C-13). The W4 concurrency
+// suite installs a one-shot hook that commits a roster mutation between the read
+// snapshot and the publication lock, then clears it. Production never sets it.
+let publishBarrier: () => Promise<void> = () => Promise.resolve();
+export function __setPublishBarrier(hook: () => Promise<void>): () => void {
+  publishBarrier = hook;
+  return () => { publishBarrier = () => Promise.resolve(); };
+}
+
 export interface PreviewResponse {
   httpStatus: number;
   body: {
@@ -213,6 +222,12 @@ async function publishPreviewInner(
 
   // Step 2: compute optimal and greedy outside any lock; validated internally.
   const computation = computeMatch(projectMatchInput(snapshot.roster!));
+
+  // Test-only barrier (C-13). Fires in the stale window AFTER the read snapshot
+  // and compute, BEFORE the publication lock, so a test can commit a roster
+  // mutation here and prove the version recheck below rejects and inserts no
+  // stale row. Never set by production code.
+  await publishBarrier();
 
   // Step 3-4: lock the trip, recheck the version, then publish or reuse.
   return withTransaction(pool, "write", async (client) => {
