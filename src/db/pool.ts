@@ -11,7 +11,7 @@ export function createPool(connectionString: string, max = 5): Pool {
 
 const globals = globalThis as typeof globalThis & { groupRidePool?: Pool };
 
-function appPool(): Pool {
+export function appPool(): Pool {
   if (globals.groupRidePool) return globals.groupRidePool;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required.");
@@ -19,6 +19,17 @@ function appPool(): Pool {
   assertLocalTarget(url, database, appRole);
   globals.groupRidePool = createPool(url);
   return globals.groupRidePool;
+}
+
+/**
+ * Test-only: end and clear the cached app pool so the next appPool() builds a
+ * fresh one. Keeps each integration test's app sessions out of the next test's
+ * offline reset (ISSUE-018). No production caller uses this.
+ */
+export async function __resetAppPoolForTests(): Promise<void> {
+  const existing = globals.groupRidePool;
+  globals.groupRidePool = undefined;
+  if (existing) await existing.end();
 }
 
 export function withAppTransaction<T>(

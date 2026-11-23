@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**W0 and W1 passed.** The scaffold builds, C-18 and the HTTP readiness checks passed on the host, and the student accepted the matcher and input validators. W2 begins with the shared mutation helper. [Current handoff](WORKPLAN.md)
+**W0, W1 and the W2 technical gate passed.** The host ran all 21 PostgreSQL mutation cases, including failure replay under contention. W3 is ready to start. Independent student acceptance of W2 remains pending. [Current handoff](WORKPLAN.md)
 
 ## Documentation
 
@@ -42,6 +42,8 @@ npm run test:readiness
 ```
 
 `npm run test:readiness` launches production and development servers on temporary loopback ports. It uses the designated disposable test database. Expect a working landing page and HTTP 200 readiness in production, HTTP 503 `DATASET_MISMATCH` after one cost changes, and HTTP 200 readiness in development after an offline reset. The check clears the test database and seeds a fresh starter trip. Stop any app using the test database first. If interrupted during the drift check, stop its app process and use `npm run demo:reset -- test` to restore the test fixture.
+
+For W2, stop any app using `groupride_test`, then run `npm run test:unit` and `npm run test:concurrency -- --reporter=verbose`. The concurrency suite uses the two test URLs in `.env` and resets the designated test database before each case.
 
 To open the scaffold against your demo database, run `npm start` after building or use `npm run dev`, then visit `http://127.0.0.1:3000`.
 
