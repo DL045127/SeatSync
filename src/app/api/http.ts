@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import {
   OutcomeUnknown,
+  TerminalBusinessError,
   TransientFailure,
   type ApiErrorBody,
 } from "../../contracts/errors.ts";
@@ -114,6 +115,62 @@ function parseJson(text: string): unknown | Response {
 }
 
 /**
+ * Validate that a request carries no meaningful body (the preview contract is
+ * `{}`). Enforces the 16 KiB byte cap, rejects malformed JSON, and rejects any
+ * non-empty object. Returns a 400 Response on violation, otherwise undefined.
+ */
+export async function readEmptyBody(request: Request): Promise<Response | undefined> {
+  // Read the raw bytes so an ABSENT body can be distinguished from whitespace
+  // or any other content (ISSUE-025). Enforce the byte cap while reading.
+  const body = request.body;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (body) {
+    const reader = body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > MAX_BODY_BYTES) {
+          await reader.cancel();
+          return invalidInput("Request body exceeds the 16 KiB limit.");
+        }
+        chunks.push(value);
+      }
+    }
+  } else {
+    const text = await request.text();
+    return classifyEmptyBodyText(text);
+  }
+  return classifyEmptyBodyText(new TextDecoder().decode(concat(chunks, total)));
+}
+
+/**
+ * Accept ONLY a genuinely absent body (empty string) or a literal `{}`. A
+ * whitespace-only body, a scalar (null/42/"x"), an array ([]), malformed JSON,
+ * or a non-empty object are all rejected as invalid input.
+ */
+function classifyEmptyBodyText(text: string): Response | undefined {
+  if (text === "") return undefined; // absent body
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return invalidInput("Request body is not valid JSON.");
+  }
+  const isEmptyObject =
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    Object.keys(parsed).length === 0;
+  if (!isEmptyObject) {
+    return invalidInput("This endpoint accepts only an empty request body.");
+  }
+  return undefined;
+}
+
+/**
  * Translate a MutationResponse into a Response, including the replay header.
  */
 export function respondMutation(result: MutationResponse): Response {
@@ -134,6 +191,30 @@ export async function runMutation(
     return respondMutation(await op());
   } catch (error) {
     return mapError(error, requestKey);
+  }
+}
+
+/**
+ * Run a non-keyed read/preview operation (no idempotency key, no operation
+ * metadata). Maps a TerminalBusinessError to its status/code and transient and
+ * unexpected failures like the mutation path.
+ */
+export async function runPreview(op: () => Promise<{ httpStatus: number; body: unknown }>): Promise<Response> {
+  try {
+    const result = await op();
+    return json(result.body, result.httpStatus);
+  } catch (error) {
+    if (error instanceof TerminalBusinessError) {
+      const body: ApiErrorBody = {
+        error: { code: error.code, message: error.message, requestId: randomUUID() },
+      };
+      if (error.currentVersion !== undefined) body.error.currentVersion = error.currentVersion;
+      if (error.fields) body.error.fields = error.fields;
+      return errorResponse(error.httpStatus, body);
+    }
+    // No request key for a preview, so reuse the mutation mapper with an empty
+    // key; it never produces operation metadata for these error types.
+    return mapError(error, "");
   }
 }
 

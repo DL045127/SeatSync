@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**W0, W1 and the W2 technical gate passed.** The host ran all 21 PostgreSQL mutation cases, including failure replay under contention. W3 is ready to start. Independent student acceptance of W2 remains pending. [Current handoff](WORKPLAN.md)
+**The student accepted W3, and R1 (the internal workflow demo) passed.** W4 covers races and failure recovery. Independent student acceptance of W2 remains pending. [Current handoff](WORKPLAN.md)
 
 ## Documentation
 
@@ -45,9 +45,31 @@ npm run test:readiness
 
 For W2, stop any app using `groupride_test`, then run `npm run test:unit` and `npm run test:concurrency -- --reporter=verbose`. The concurrency suite uses the two test URLs in `.env` and resets the designated test database before each case.
 
+For W3, run the preview/commit integration cases (part of `npm run test:concurrency`) and the browser workflow checks. The browser checks need Chromium installed once with `npx playwright install chromium`; then, with the database running and `groupride_test` free, run `npm run test:e2e`. It builds a production server on loopback port 3100 against the test database (reset first) and drives real Chromium through WF-1, WF-2, WF-3, WF-4, U-02, and U-03. Reducer ordering (U-01, U-04) is covered database-free by `npm run test:unit`.
+
 To open the scaffold against your demo database, run `npm start` after building or use `npm run dev`, then visit `http://127.0.0.1:3000`.
 
 `npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it. `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
+
+## Demonstration (W3 workflow)
+
+With the database running and the app stopped, build then start the demo:
+
+```sh
+npm run build
+npm run demo
+```
+
+`npm run demo` resets the demo database, prints a fresh starter trip ID, and starts the production server on `http://127.0.0.1:3000`. The WF-4 directional-cost walk-through:
+
+1. Open `http://127.0.0.1:3000` and create a trip (any name/destination; departure as ISO 8601 with an offset, e.g. `2026-03-01T09:30:00+00:00`). You land on `/trips/<id>`.
+2. Under **Register**, add a driver in zone `north` with 1 seat, then a passenger in zone `east`.
+3. Click **Preview**. The current page shows the preview version. The fixture’s expected result is 1 match at cost 7, visible in the status line after saving.
+4. Click **Save plan (commit)**. The status line shows `assigned`, `Matched: 1`, `Total cost: 7`.
+5. Reload the page: the saved plan persists.
+6. Click **Reduce capacity** or **Cancel** on the driver: the plan clears and the status becomes `needs_rematch`. Preview and save again to rematch.
+
+Open the same `/trips/<id>` URL in a second browser profile to see the stale-commit flow: if one tab commits, the other tab's commit is rejected with a review/refresh prompt rather than silently overwriting the saved plan.
 
 ## Course deliverables
 

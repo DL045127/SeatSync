@@ -258,3 +258,117 @@ export async function listAssignments(
   );
   return result.rows;
 }
+
+export interface ZoneCostRow {
+  driver_zone_id: string;
+  passenger_zone_id: string;
+  cost: number;
+}
+
+export async function listZoneCosts(client: PoolClient): Promise<ZoneCostRow[]> {
+  const result = await client.query<ZoneCostRow>(
+    "SELECT driver_zone_id, passenger_zone_id, cost FROM zone_costs",
+  );
+  return result.rows;
+}
+
+export interface PreviewRow {
+  id: string;
+  trip_id: string;
+  base_version: number;
+  algorithm_version: string;
+  optimal_result: unknown;
+  greedy_result: unknown;
+}
+
+/** Find an immutable preview by its unique (trip, version, algorithm) key. */
+export async function findPreviewByKey(
+  client: PoolClient,
+  tripId: string,
+  baseVersion: number,
+  algorithmVersion: string,
+): Promise<PreviewRow | undefined> {
+  const result = await client.query<PreviewRow>(
+    `SELECT id, trip_id, base_version, algorithm_version, optimal_result, greedy_result
+       FROM match_previews
+      WHERE trip_id = $1 AND base_version = $2 AND algorithm_version = $3`,
+    [tripId, baseVersion, algorithmVersion],
+  );
+  return result.rows[0];
+}
+
+/** Find a preview by its id within a trip. */
+export async function findPreviewById(
+  client: PoolClient,
+  tripId: string,
+  previewId: string,
+): Promise<PreviewRow | undefined> {
+  const result = await client.query<PreviewRow>(
+    `SELECT id, trip_id, base_version, algorithm_version, optimal_result, greedy_result
+       FROM match_previews WHERE trip_id = $1 AND id = $2`,
+    [tripId, previewId],
+  );
+  return result.rows[0];
+}
+
+export async function insertPreview(
+  client: PoolClient,
+  preview: {
+    tripId: string;
+    baseVersion: number;
+    algorithmVersion: string;
+    optimalResult: unknown;
+    greedyResult: unknown;
+  },
+): Promise<PreviewRow> {
+  const result = await client.query<PreviewRow>(
+    `INSERT INTO match_previews
+       (trip_id, base_version, algorithm_version, optimal_result, greedy_result)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+     RETURNING id, trip_id, base_version, algorithm_version, optimal_result, greedy_result`,
+    [
+      preview.tripId,
+      preview.baseVersion,
+      preview.algorithmVersion,
+      JSON.stringify(preview.optimalResult),
+      JSON.stringify(preview.greedyResult),
+    ],
+  );
+  return result.rows[0];
+}
+
+/**
+ * Atomically replace the committed plan: delete existing assignments, insert the
+ * new ones at `committedVersion`, then set the trip to `assigned` with plan
+ * metadata and the incremented version.
+ */
+export async function commitPlan(
+  client: PoolClient,
+  params: {
+    tripId: string;
+    previewId: string;
+    algorithmVersion: string;
+    committedVersion: number;
+    assignments: Array<{ requestId: string; driverId: string; pickupCost: number }>;
+  },
+): Promise<void> {
+  await client.query("DELETE FROM assignments WHERE trip_id = $1", [params.tripId]);
+  for (const a of params.assignments) {
+    await client.query(
+      `INSERT INTO assignments (trip_id, request_id, driver_id, pickup_cost, committed_version)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [params.tripId, a.requestId, a.driverId, a.pickupCost, params.committedVersion],
+    );
+  }
+  await client.query(
+    `UPDATE trips
+        SET version = $2,
+            status = 'assigned',
+            plan_version = $2,
+            committed_preview_id = $3,
+            algorithm_version = $4,
+            committed_at = now()
+      WHERE id = $1`,
+    [params.tripId, params.committedVersion, params.previewId, params.algorithmVersion],
+  );
+}

@@ -14,20 +14,20 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 
 | Field | Current value |
 |---|---|
-| Last updated | 2026-11-23 |
+| Last updated | 2026-11-24 |
 | Implementation baseline | `e2510d7` — finalized architecture contracts; Git already exists |
-| Handoff revision | W1 is committed at `7483c57`. W2 is the uncommitted diff on that revision. |
-| Completed | W0, R0, W1 passed, and W2's technical gate is passed. The 21-case live suite covers all of C-04/09/10/11/12/17/19; ISSUE-006/014/016/019/020 are closed, including the C-17 racing-failure interleaving. |
-| Runnable state | Verified on the host: `npm run test:concurrency` 21/21 against the local test database, `npm run test:unit` 17/17, `npm run test:matching` 69/69, `npm run test:setup` 2/2, plus lint, typecheck, and the production build. |
-| Current checkpoint | W2 technical gate passed (all W2 issues closed). A-3 independent student review of the W2 implementation is pending; W3 may begin on the passed technical gate. |
-| Next bounded task | Begin W3: snapshot read → compute → version-checked preview publish, commit by preview ID via W2's helper, the minimal pages/reducer/session-storage recovery, and the W3 checks (C-02, C-03, C-07, C-14; WF-1, WF-2, WF-4; U-01–U-04). |
+| Handoff revision | W2 is committed at `eb1e864`. W3 is the uncommitted working diff on that revision. |
+| Completed | W0 through W3 passed, along with R0 and R1. |
+| Runnable state | Verified live 2026-11-24 on the local test database: `npm run test:e2e` 12/12 (WF-1/2/3/4, U-02/U-03, three ISSUE-021 cases, four ISSUE-022 cases), `npm run test:concurrency` 36/36 (incl. 15 preview/commit with the mixed-case-UUID ISSUE-025 cases across both result fields), `npm run test:unit` 33/33, `npm run test:matching` 69/69, `npm run test:setup` 2/2, plus lint, typecheck, and the production build. |
+| Current checkpoint | W3 complete. The student accepted A-4 and R1 passed. W4 is next. |
+| Next bounded task | W4 (races and failure recovery): C-01, C-05, C-06, C-08, C-13, C-15, C-16, and the commit-version-guard mutant. The accepted W3 changes are uncommitted on `eb1e864`. |
 | Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. The default shell still selects Node 26, which crashes on a missing simdjson dylib (ISSUE-002); prepend `$(brew --prefix node@24)/bin` to `PATH` for all project commands. Exact project versions are in `package.json`/`package-lock.json`. |
-| Blockers | None for W3 technical progress. ISSUE-004 (reset/startup overlap readiness) is later work. A-3 is pending for independent student acceptance but does not block routine implementation. |
-| Human review | The student accepted W1, reported the original W2 failure, and ran the corrected W2 suite. The A-3 acceptance decision for W2 is pending. [Reviewed C-17 evidence](docs/EVIDENCE.md#w2-c-17-racing-failure-coverage-closes-issue-019) |
+| Blockers | None for W3 technical progress. ISSUE-004 remains later work. |
+| Human review | The student accepted W1, reported the original W2 failure, and ran the corrected W2 suite. For A-4 the student observed matching previews across two tabs, persistence after reload and the stale-save review prompt. The student accepted W3. A-3 (W2) remains pending. [A-4 evidence](docs/EVIDENCE.md) |
 | External course tasks | Proposal/slide deadlines, team ownership, repository access, submission status, and demo booking are unverified; student must obtain current Canvas information |
-| Latest validation | Host run on 2026-11-23 against the local test database: `test:concurrency` 21/21 (incl. the new C-17 case where a same-key retry waits on the advisory lock during A's failure finalization and replays the identical 422), `test:unit` 17/17, `test:matching` 69/69, `test:setup` 2/2, lint, typecheck, build. [C-17 racing-failure coverage](docs/EVIDENCE.md#w2-c-17-racing-failure-coverage-closes-issue-019) |
+| Latest validation | Host passed 36 concurrency and 12 browser cases. Reviewer passed 33 unit, 69 matching and two setup tests, lint, typecheck and build. The preview POST handler returned 200 for both valid controls and 500 INTERNAL_ERROR for all 16 corrupt variants across the two result fields. After the fixture refinement the host reran all 36 concurrency cases. The reviewer checked sibling selection and all 13 exact corruption assertions and reran lint and typecheck. [Fifth-round verification](docs/EVIDENCE.md#w3-fifth-round-verification) |
 
-For a W3 handoff, use this working tree or transfer the W2 diff on `7483c57`, including its untracked files (`src/contracts/errors.ts`, `src/db/{advisory-lock,commit-outcome}.ts`, `src/trips/`, `src/app/api/`, `tests/{unit,concurrency}/`, and the three new vitest configs). Use the designated local test database for the live suite.
+Continue from the W3 working tree on `eb1e864`, including its untracked preview/commit services and routes, browser pages and reducer, demo script, Playwright configuration, and new tests.
 
 Handoff verification on 2026-11-21 copied the current tracked and non-ignored untracked files to a temporary directory. With the existing installed dependencies linked in, `npm run test:setup`, `npm run typecheck`, and `npm run lint` passed without `.env` or generated `.next` files.
 
@@ -59,6 +59,11 @@ Add implementation bugs as they are discovered.
 | ISSUE-018 / test failure | closed | The integration suite previously left app sessions open across offline resets. | Reproducible database suite | Retain per-case pool cleanup. | W2 diff on `7483c57`. All 17 cases completed their guarded setup and reset on the host. [Host rerun](docs/EVIDENCE.md#w2-host-rerun) |
 | ISSUE-019 / coverage | closed | The lock-wait case only observed a waiter before a success commit; the racing failure-finalization interleaving was unverified. | C-17 failure finalization | — | Fixed: added a 21st case where A takes a terminal 422 and pauses at before-failure-commit holding the key lock, B is observed waiting in `pg_locks` on that lock, and on release B replays the identical 422 with roster/version unchanged. Verified live 21/21. Duplicate receipt INSERT requires 23505. [C-17 racing-failure coverage](docs/EVIDENCE.md#w2-c-17-racing-failure-coverage-closes-issue-019) |
 | ISSUE-020 / test hook | closed | A throwing before-COMMIT hook released a client with a transaction still open. | Test harness cleanup | — | Fixed: the hook call is wrapped to ROLLBACK (or discard the client if rollback also fails) and rethrow. Two database-free unit tests cover both cleanup paths. [Gate review corrections](docs/EVIDENCE.md#w2-gate-review-corrections-issue-006-019-020-and-issue-014-tightening) |
+| ISSUE-021 / bug | closed | A trip registration with a pending creation replaced the key; a delayed Home receipt could erase a newer key. | U-02/U-04 | — | Fixed: `claimSlot`/`clearPendingIfOwner` guard acquisition and release on both pages, both navigation directions. Verified live by three browser tests (zero new POSTs, unchanged bytes). [Third-round fixes](docs/EVIDENCE.md#w3-correction-review-third-round-of-fixes) |
+| ISSUE-022 / bug | closed | Create with 2026-02-30T09:30Z, or register a name of 81 ASCII letters: each sent a POST and left a pending op after a receipt-free 400. | U-02/U-04 | — | Fixed: the create page runs `normalizeCreateTrip` and the registration forms run `normalizeLabel` before claiming the slot, so both invalid inputs are caught locally (0 POSTs, field error, corrected submit succeeds). Verified live. [Fourth-round fixes](docs/EVIDENCE.md#w3-correction-review-fourth-round-of-fixes) |
+| ISSUE-023 / bug | closed | A delayed v5 preview after v6 hid the v6 details while Save stayed enabled; an old-key conflict left the floor below its reported version. | U-01/U-04 | — | Fixed: the reducer holds the full accepted preview and the page renders from it; the mutation reducer raises the floor from any reply's version before the key guard. New reducer unit tests. [Third-round fixes](docs/EVIDENCE.md#w3-correction-review-third-round-of-fixes) |
+| ISSUE-024 / workflow | closed | Preview and saved views previously omitted named assignments and unassigned riders. | WF-1/WF-2/WF-4 | — | WF-2 checks the specific remaining rider after capacity reduction. [Second-round verification](docs/EVIDENCE.md#w3-second-round-verification) |
+| ISSUE-025 / bug | closed | A cached plan assigns the same passenger UUID in uppercase and lowercase and reports two matches. Both result fields return 200. | C-14, preview integrity | — | Fixed: the preview result validator requires canonical lowercase UUIDs for `driverId`, `passengerId` and every unassigned id before the uniqueness scan, so the uppercase spelling is non-canonical and the row is refused (≥500); the cost regression fixtures now use real UUIDs so UUID validation cannot mask a cost/uniqueness regression. New mixed-case-duplicate cases run against both result fields. Verified live. [Fifth-round fixes](docs/EVIDENCE.md#w3-correction-review-fifth-round-of-fixes) |
 
 Use states `open`, `in progress`, `needs verification`, `closed`, or `deferred`. For a bug, include starting data, steps/command, expected behavior, and actual behavior, or link to that reproduction in EVIDENCE. Label a suspected cause as a hypothesis until investigated. For a question, record the decision needed and what work depends on it.
 
@@ -77,7 +82,7 @@ Technical gates permit dependent implementation to proceed. Independent human ac
 | W0 — Reproducible foundation | E0 / days 1–2 | Read the selected contracts | Passed | Codex / W0 scaffold changes from `b88d98a` / [W0 closeout](docs/EVIDENCE.md#w0-closeout) |
 | W1 — Matching with independent answers | E1 / day 3 | W0 | Passed | W1 diff on `fc3817a`. Technical checks passed and the student accepted A-2 on 2026-11-23. [W1 closeout](docs/EVIDENCE.md#w1-closeout) |
 | W2 — Durable mutations | E1 / days 4–5 | W0 and W1 | Passed | Codex / W2 diff on `7483c57` / live 21-case suite incl. the C-17 racing-failure interleaving; ISSUE-006/014/016/019/020 closed. A-3 human review pending. [C-17 racing-failure coverage](docs/EVIDENCE.md#w2-c-17-racing-failure-coverage-closes-issue-019) |
-| W3 — Complete browser workflow | E1 / days 6–7 | W2 | Not started | Unassigned / none / none |
+| W3 — Complete browser workflow | E1 / days 6–7 | W2 | Passed | Working diff on `eb1e864`. The student accepted the verified W3 workflow after checking persistence and stale-save handling in two tabs. [Fifth-round fixes](docs/EVIDENCE.md#w3-correction-review-fifth-round-of-fixes) |
 | W4 — Races and failure recovery | E2 / days 8–9 | W3 | Not started | Unassigned / none / none |
 | W5 — Evaluation and scope defense | E2–E3 / day 10 | W4 | Not started | Unassigned / none / none |
 | W6 — Clean reproduction and submission | E3 / days 11–14 | W5; course tasks can proceed earlier | Not started | Unassigned / none / none |
@@ -167,7 +172,7 @@ Student(s) must also complete these course deliverables and records:
 | Release | Required observations | Current state |
 |---|---|---|
 | R0 — Setup ready | W0 passed; reproducible environment/database; actual commands in README | Passed |
-| R1 — Internal workflow demo | W0–W3 passed; success, reload, availability change, and stale-preview handling observable | Not passed |
+| R1 — Internal workflow demo | W0–W3 passed; success, reload, availability change, and stale-preview handling observable | Passed. The W3 technical checks and A-4 student acceptance are recorded. [Evidence](docs/EVIDENCE.md#w3-fifth-round-verification) |
 | R2 — Technical release candidate | W0–W5 technical checks/measurements passed; all 38 checks accounted for; evidence traceable to candidate code | Not passed |
 | R3 — Submission ready | R2 plus W6 clean reproduction, independent human acceptance, required PDFs/access/submissions/booking | Not passed |
 
