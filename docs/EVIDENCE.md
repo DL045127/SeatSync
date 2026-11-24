@@ -1,6 +1,6 @@
 # Project evidence
 
-**Status:** R2 passed on `1a831f1` after clean-checkout verification of ISSUE-040–042. Student reviews and course submissions remain open. [W6 review corrections](#w6-review-corrections). Design and planned checks live in [ARCHITECTURE.md](ARCHITECTURE.md).
+**Status:** The W6 technical gate and R2 passed on local candidate `8e2dc04`. W6 course closeout and R3 remain open. [W6 completion review](#w6-completion-review)
 
 The [course specification](../PROJECT_SPEC.md) requires the content below, but does not require separate documents for each category. These are working records for the final slide deck; DEL-3 does not require a separate written report.
 
@@ -166,6 +166,19 @@ Fix `c15b268` was run from a fresh clone using Node 24.22.3 and the cached lockf
 | Restore the candidate and run D-1 again | Exit 0, zero discrepancies and oracle agreement on 100/100 seeds. Median/p95 were 1.629/1.854 ms for the optimizer and 0.705/0.801 ms for greedy. |
 
 The [retained W6 artifact](../eval/w6/d1-matching.json) contains 100 finite, nonnegative observations in acquisition order for each solver. A separate Python check sorted each raw array and exactly reproduced the stored median and p95 from its 50th and 95th observations. Both negative controls ran only in the disposable checkout. Matching passed 69/69, lint and typecheck exited 0. Database and browser suites were last verified in the [W6 follow-up review](#w6-follow-up-review). R2 stands, and R3 student tasks remain open.
+
+### W6 completion review
+
+On 2026-11-24 a fresh clone of local candidate `8e2dc04` reproduced the README procedure using Node 24.22.3, the tracked env example, locally cached lockfile dependencies and Chromium, and a new isolated PostgreSQL volume. Review covered all eight commits after W5 (`2d4768b`). The acceptance table contains all 38 distinct architecture IDs.
+
+| Check | Observed on the local candidate |
+|---|---|
+| Setup and release suites | Setup 2/2, matching 69/69, unit 33/33, database 1/1, concurrency 47/47 and Chromium 12/12. Lint, typecheck, production build and readiness passed. |
+| Demo and registration recovery | The documented demo command passed all three browser scenarios on the demo database. Suppressing the registration retry POST failed U-02 at the response assertion. Restoring the candidate passed 5/5 repeats. The demo and database service were stopped. |
+| D-1 | The independent enumeration agreed on all 100 tiny inputs. The dense fixture served 50 at cost 113 with optimizer p95 2.020 ms in the full run. The retained and fresh timing arrays reproduced their reported percentiles. Skipping dense solver work failed all 100 samples. Corrupting one greedy assignment failed its single measured sample. Restoring both solvers passed. |
+| D-2 and P-01 | The observed lock holder blocked cancellation for a measured interval of 26 ms. Both stale paths returned STALE_VERSION. P-01 served 100 fresh previews with zero cache hits. Competing p95 was 12.7 ms (+2.4 ms over idle), with zero errors or timeouts. |
+
+**Submission status.** A live read of GitHub’s default branch returned `main` at `2d4768b`, eight commits behind the reviewed candidate. The local proposal has one page and the draft deck has six. Their seven source links resolve to the cited Git revision. A keyword screen of 171 reachable file blobs, including PDF text, found course-material terms only in project records. Student confirmation of provenance and contributions is outstanding. Publication of the final candidate, student reviews, the official-template deck, demo rehearsal/booking and Canvas confirmations remain on the [W6 course checklist](../WORKPLAN.md#w6--clean-reproduction-and-submission).
 
 ## W0 setup verification
 
@@ -914,3 +927,96 @@ Record dependency versions, reused source URLs and starting versions/commits, st
 | Codex-assisted W6 preparation | Audit `f306937` and browser-test correction `5d86e5b` | Reproduced the candidate, mapped the acceptance IDs, added C-12 coverage and prepared proposal and presentation PDFs from repository evidence. | Student review of course materials pending. |
 
 The [proposal PDF](../deliverables/proposal.pdf) and [presentation draft](../deliverables/presentation-draft.pdf) are available for student review. The six-slide draft follows the published slide topics. Applying the official Canvas template, rehearsing, booking and submitting remain pending. See [PROJECT_SPEC.md](../PROJECT_SPEC.md) for the full deliverable and acceptance checklist.
+
+## Address extension design review
+
+On 2026-11-24 the two proposed hand examples were projected from their directed input times and run through the existing matcher on Node 24. The first optimum was 180 seconds. Transposing the pickup matrix gave 420 seconds and swapping the drivers’ direct-to-venue times gave 300. In the threshold example the exact solver seated two for 1,020 seconds, greedy seated one for 60, and reversing the pickup direction produced the incorrect 180-second diagonal. The existing matching suite passed 69/69. These observations cover the matcher and the example arithmetic. Exercising address selection, publication, commit/reload and actual provider coverage remains part of the proposed milestones. [Fixtures and delivery gates](ARCHITECTURE-v2.md#8-independent-example-and-delivery-gates)
+
+### Address extension provider and rematch review
+
+On 2026-11-24 the public Route Matrix page was opened and its request parameters, response fields, synchronous cell limit and pricing formula inspected. The earlier file/anchor check covered repository links only. All matrix citations now point to the API reference. The platform overview describes storage generally. Confirmation covering the chosen plan, both APIs and retention until reset remains open under ISSUE-045. [Matrix reference](https://apidocs.geoapify.com/docs/route-matrix/) · [Autocomplete](https://apidocs.geoapify.com/docs/geocoding/address-autocomplete/) · [Service overview](https://www.geoapify.com/products-and-services/) · [Terms](https://www.geoapify.com/terms-and-conditions/)
+
+An independent directed-set calculation counted 1,070 required legs at 20 drivers and 50 pickups. Applying the published base formula gives 570 credits for the two rectangular requests. Subtracting the prior required legs gives 0 new cells for a covered reduction, 51 for the final driver and 21 for the final pickup. These are design calculations. The token protocol, leg reuse, deadline and quota behavior still require implementation and the acceptance runs in the design. No authenticated provider request was made. [Delivery gates](ARCHITECTURE-v2.md#delivery-and-acceptance)
+
+### Address checkpoint planning review
+
+The capacity service allows an active driver at zero seats to regain capacity. An independent set calculation for a one-driver fixture reproduced the revised retention rule. The two-seat → zero-seat → two-seat sequence preserved all three observed legs and needed zero new cells on restoration. Adding pickup Q while the only driver X was at zero seats deferred exactly X→Q and Q→venue until restoration. Withdrawing the original pickup removed its two incident legs from the next preview. These observations validate the example arithmetic. The production projection, exhaustive-oracle comparison, fixture key generation and reset remain unrun extension checks. [Capacity service](../src/trips/service.ts) · [L-series acceptance checks](ARCHITECTURE-v2.md#delivery-and-acceptance)
+
+Confirmed with `git check-ignore -v` that both proposed demo and test fixture-key paths are ignored. The provider reference lists 140 km/h as the car default and 10–252 km/h as the parameter range. The proposed wire request omits the optional avoidance array. [Route Matrix reference](https://apidocs.geoapify.com/docs/route-matrix/)
+
+### Address design follow-up review
+
+On 2026-11-24 a design review by Claude Code added five revisions to the [address-trip architecture](ARCHITECTURE-v2.md):
+- cell handoff when a newer roster version takes over a live preview (L-14);
+- lazy fixture-key creation at runtime with a temp-file → `fsync` → `link` publish (L-01);
+- reset behavior when key rotation fails, and operator ownership of the live signing key;
+- a separate public summary column, so dashboard and stored-hit reads never select the evidence blob (L-12);
+- ISSUE-046 returned to `open`, because its fix is specified but not implemented.
+
+These are document changes only. Fences and whitespace were checked. No application code ran and no provider request was made. Human review of these revisions is pending.
+
+### Address architecture revision review
+
+Reviewed the five changes listed in the follow-up review against the reset transaction, keyed mutation error classification and preview repository reads. A temporary-file probe with dummy content confirmed that a successful hard link leaves both names until the winning creator unlinks its temporary name. A directed-set example handed off three cells for driver X and pickup P. After replacing X with Y, only P→venue belonged to the new retention set. All 19 L-series IDs still map to their workplan checkpoints. These are design-review observations. No v2 application workflow, database reset or provider call was exercised. [Open questions ISSUE-047–051](../WORKPLAN.md#bugs-and-open-issues)
+
+The reset currently performs TRUNCATE, seed and starter-trip insertion inside one transaction. A confirmed COMMIT is the point at which post-reset rotation can be described as recovery for a durable reset. Existing keyed mutations convert unexpected business errors to terminal receipts and explicitly classified transient failures remain retryable. These boundaries inform L-01 and L-04. [Reset code](../src/db/setup.ts) · [Mutation helper](../src/trips/mutation.ts) · [PostgreSQL TRUNCATE](https://www.postgresql.org/docs/18/sql-truncate.html)
+
+### Address architecture revision follow-up
+
+On 2026-11-24 Claude Code checked ISSUE-047–051 against the code and revised [ARCHITECTURE-v2.md](ARCHITECTURE-v2.md).
+
+Code checks:
+- `runSetup` performs the TRUNCATE, seed and starter-trip insert inside one transaction (`src/db/setup.ts`).
+- `toTerminal` finalizes any unexpected `Error` raised in business work as a terminal 500 receipt (`src/trips/mutation.ts`).
+
+Both confirm the reviewer's failure scenarios.
+
+Revisions:
+- **ISSUE-047.** Instead of rotating a key file after COMMIT, signing keys are now derived (HKDF) from a stable master secret and a `dataset_generation` UUID. Reset replaces that UUID in its own transaction, so a reset and token invalidation commit or roll back together, including when the COMMIT outcome is unknown. Reset no longer writes files.
+- **ISSUE-048.** Key or generation unavailability is a retryable `TransientFailure` with no receipt. The secret's format is validated before use, so a corrupt file can't be read as tampered tokens. The README describes creation on first runtime use.
+- **ISSUE-049.** Each initializer unlinks its own temporary file on success, on `EEXIST` and on error.
+- **ISSUE-050.** Handed-off cells are intersected with the newcomer's retention set and merged without replacing retained observations.
+- **ISSUE-051.** Display reads validate results and the summary column. Full evidence is validated at publication, reuse and commit.
+
+L-01, L-04, L-12 and L-14 gained the matching assertions. The issues stay open until the L-checks run against an implementation. These are document changes only; no application code ran. Human review is pending.
+
+### Dataset generation design review
+
+The proposed generation update fits the existing guarded reset transaction. Receipt replay has a separate lifetime: reset explicitly truncates mutation receipts alongside trips, so an applied create cannot replay its original success after a committed reset. The baseline already defines this boundary. L-01 can check reset invalidation, while L-04 can check replay across signing-key unavailability or replacement with receipts retained. [Reset implementation](../src/db/setup.ts) · [Baseline recovery contract](ARCHITECTURE.md#9-local-operation-and-implementation-roadmap)
+
+A standalone Node 24 check with dummy data produced different HMAC tags for two well-formed 32-byte master secrets differing by one bit at the same generation. Length and encoding alone cannot detect a valid-format substitution, including accidental regeneration after a file is lost. Clarify the intended recovery guarantee before defining the L-04 control. Stored public-summary reads and full evidence reads are now separated; the committed dashboard should validate its stored policy after an upgrade. All 19 L-series IDs mapped to their checkpoints. No application, live database reset or provider request was run. The implementation gates and independent human review remain open.
+
+### Dataset generation review follow-up
+
+On 2026-11-24 Claude Code applied the dataset generation review to [ARCHITECTURE-v2.md](ARCHITECTURE-v2.md).
+
+The review's three findings:
+- **Reset and replay.** Replay after a reset is no longer promised. A committed reset truncates receipts and changes the generation, so a pre-reset key and body finalize a new terminal 422. This matches the released contract that old operations have no replay guarantee across a reset. L-04 now requires replay only while the receipt exists. L-01 covers the rolled-back reset (replays the original 201), the committed reset (new 422) and the lost acknowledgement.
+- **Secret loss.** The 503 guarantee is narrowed to detectable storage, format and generation-read failures. Loss or replacement of the master secret invalidates outstanding tokens. The secret is cached per process. Tokens carry a key identifier so `key_mismatch` failures can be counted. Fixture initialization logs a warning when it creates a secret while address trips exist. A persisted key fingerprint was considered and rejected for the loopback pilot. L-01 tests deletion of the secret between processes.
+- **Display policy.** Cached preview hits validate against the current policy. Committed dashboards validate against the policy stored with the committed preview, which the build must still decode.
+
+Additional issue found during this follow-up: verification needs the generation to derive the key. The design now derives the verification key from the current generation and verifies the MAC over the exact token bytes before parsing. The key ID and generation header is read beforehand only to label failures. All client-token decoding failures become 422, because any other exception in keyed work would be finalized as a terminal 500 receipt (`toTerminal` in `src/trips/mutation.ts`).
+
+These are document changes only. Fences and whitespace were checked, and no application code ran. Human review is pending.
+
+### Selection token verification review
+
+Reviewed the follow-up against the HTTP reader, mutation helper and trip service. The existing transport rejects an invalid or oversized outer request with 400 before receipt handling. For a registration, the helper looks up the receipt and locks the target trip before token verification can run, so a same-key retry against a trip removed by reset finalizes a new 404. An old venue token on a fresh post-reset creation reaches verification and finalizes a new 422. The proposed L-01 and L-04 assertions now distinguish those paths, and L-12 covers displaying a committed plan across a policy upgrade. [HTTP boundary](../src/app/api/http.ts) · [Mutation order](../src/trips/mutation.ts) · [Trip lookup](../src/trips/service.ts)
+
+A standalone Node v24.22.3 check with dummy inputs confirmed that changing the encoded header or the HKDF generation changes the HMAC, a short tag throws on an unguarded constant-time comparison, ordinary padded base64 can be accepted by the base64url decoder, and bytes with a valid MAC can still fail JSON parsing. These observations informed the strict envelope and generic token rejection in ISSUE-052. No application, database reset or provider workflow ran. All extension L-checks and student review remain pending. [Revised design](ARCHITECTURE-v2.md#3-search-confirmation-and-http-contracts)
+
+### Final design review decisions
+
+On 2026-11-24 Claude Code recorded the selected cold-fetch fallback in [ARCHITECTURE-v2.md](ARCHITECTURE-v2.md), with two clarifications for checkpoint A.
+
+- **Corrupt reuse candidate.** Previously, a malformed reuse candidate was an invariant failure, so every later preview for that trip would fail until a guarded reset. Now the candidate is counted as an invariant failure and skipped, and the preview fetches every required leg cold. Commit still fails safely on corrupt evidence. An effective roster change escapes a corrupt cached hit. L-11 and L-12 assert this.
+- **Token clock.** Issue and expiry use the Node server clock through an injectable clock, so L-04 can test the boundary.
+- **Cross-site writes.** A write with a present cross-site `Origin` or `Sec-Fetch-Site: cross-site` gets 403 before the keyed helper. Requests carrying neither header are allowed, because the existing Node-`fetch` scripts and suites send none (`scripts/eval-responsiveness.ts`). No route checks `Origin` today. L-04 asserts this.
+
+These are design decisions. The implementation checks and independent student inspection remain pending.
+
+### Address design commit review
+
+Reviewed the proposed fallback against the preview publication and commit paths. An invalid prior row triggers one cold attempt under normal admission and deadline rules. Required nonlocal legs need routing, while an empty or local-only projection can still publish offline. L-12 exercises the available and unavailable paths from independent starting states. L-04 now tests the exact millisecond of token expiry with fresh keys, receipt replay after expiry, and origin checks before receipt handling or provider dispatch. [Acceptance catalog](ARCHITECTURE-v2.md#delivery-and-acceptance)
+
+The design review verified 19 distinct L-IDs mapped to A–D, all 38 baseline acceptance IDs still present, local links and anchors, JSON examples, table widths, code fences and whitespace. Git ignores both proposed fixture-key paths. This was a documentation review. No application tests, database resets or provider calls were run. A–C await implementation, and ISSUE-045 continues to block D.

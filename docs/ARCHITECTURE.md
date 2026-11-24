@@ -2,6 +2,8 @@
 
 **Status:** Initial implementation baseline selected on 2026-11-19 at the user's request to finalize a combination of designs. This specifies what to build; it is not evidence of implemented correctness, performance, or independent human acceptance. Record actual results and subsequent decisions in [EVIDENCE.md](EVIDENCE.md). [PROJECT_SPEC.md](../PROJECT_SPEC.md) remains the course requirements reference.
 
+The [searchable U.S. pickups design](ARCHITECTURE-v2.md) extends this baseline with address selection, road-time estimates and versioned evidence for address-based previews. It describes the next product milestone.
+
 ## 1. Selected components and rationale
 
 | Area | Initial decision | Why this combination |

@@ -9,3 +9,4 @@ test-results/
 playwright-report/
 .playwright/
 eval/p01-control.json
+/.groupride-local/

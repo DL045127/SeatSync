@@ -9,6 +9,7 @@ Carpool coordination for organization events: create a trip, register drivers an
 - [Workplan and current handoff](WORKPLAN.md): start here for the next task, implementation checkpoints, release gates, and progress tracking.
 - [Agent instructions](AGENTS.md): repository conventions, verification, evidence, and handoff requirements for coding agents.
 - [Selected initial architecture](docs/ARCHITECTURE.md): component choices, contracts, alternatives and tradeoffs, acceptance checks, comparison experiments, and implementation roadmap.
+- [Searchable U.S. pickups design](docs/ARCHITECTURE-v2.md) covers the proposed extension for venue, driver and passenger addresses.
 - [Project evidence](docs/EVIDENCE.md): required validation results, agent/human work records, two decisions, debugging case, and attribution. Fill these during development.
 - [Course specification](PROJECT_SPEC.md): supplied requirements and final acceptance checklist.
 
@@ -52,6 +53,16 @@ For W5 evaluation, `npm run eval:matching` runs the exact-size classes and 100 o
 To open the app against your demo database, run `npm start` after building or use `npm run dev`, then visit `http://127.0.0.1:3000`.
 
 `npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it and wait for reset to finish before restarting. A startup read overlapping reset may briefly report `DATASET_MISMATCH` (ISSUE-004). `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
+
+### Address fixture setup (planned for checkpoint A)
+
+The procedure below is the L-01 clean-checkout target. The current runnable release uses zones.
+
+1. Follow the standard local dependency and database setup above with no copied signing key or provider credentials.
+2. Once checkpoint A ships, start the app with `GROUPRIDE_ADDRESS_PROVIDER=fixture` in the server environment. The first fixture search or registration against the designated demo or test database will generate that target's `.groupride-local/<demo-or-test>/fixture-signing.key`; starting the server or running `next build` creates nothing. Later starts reuse it.
+3. To rehearse reset, stop the app and run the existing guarded reset for the intended target. Reset changes that database's signing generation in the same transaction and leaves the key file untouched, so every token issued before the reset stops working. After restart, search again for a venue if its token predates reset. Keep generated keys local.
+
+[Fixture design and acceptance checks](docs/ARCHITECTURE-v2.md#delivery-and-acceptance)
 
 ## Demonstration (W3 workflow)
 
