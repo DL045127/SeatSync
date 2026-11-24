@@ -136,7 +136,7 @@ Candidate `1a831f1` was cloned into an empty directory with its own dependencies
 | Finding | Verification on the corrected candidate |
 |---|---|
 | ISSUE-040 | The [browser case](../tests/e2e/workflow.spec.ts) forwarded the registration and hid its 201 reply. A separate PATCH withdrew the passenger. After reload, Chromium sent the same POST bytes and key, received the original 201 receipt with the replay header, and cleared the pending slot. The durable snapshot stayed at version 2 with one withdrawn passenger. In the disposable clone the prior review control cleared the pending operation and refreshed without resending. The case failed waiting for the retry response. Restoring the candidate passed 5/5 consecutive runs. |
-| ISSUE-041 | The [D-1 artifact](../eval/w6/d1-matching.json) records both algorithms’ objectives, feasibility and runtime on two fixtures, 100 tiny seeds and 40 size-class cases. A separate enumeration over the 100 serialized tiny inputs reproduced every oracle and optimizer objective. All 142 pairs had finite timings and passed feasibility. The class totals reconciled to their 40 individual records. Maximum-bound solver p95 was 2.126 ms. |
+| ISSUE-041 | The D-1 artifact at `27426c1:eval/w6/d1-matching.json` records both algorithms’ objectives, feasibility and runtime on two fixtures, 100 tiny seeds and 40 size-class cases. A separate enumeration over the 100 serialized tiny inputs reproduced every oracle and optimizer objective. All 142 pairs had finite timings and passed feasibility. The class totals reconciled to their 40 individual records. Maximum-bound solver p95 was 2.126 ms. |
 | ISSUE-042 | In README order, `npm ci` installed the lockfile, setup passed 2/2 and matching passed 69/69. With the production demo running on port 3000, the tracked [demo configuration](../playwright.demo.config.ts) ran through `npm run test:demo`. All three browser scenarios passed, covering save/reload, rematch and stale save. |
 
 The full clean run passed database 1/1, unit 33/33, concurrency 47/47, and Chromium 12/12, plus lint, typecheck, build and readiness. [D-2](../eval/w6/d2-concurrency.json) passed both lock variants. [P-01](../eval/w6/p01-responsiveness.json) recorded 100 distinct uncached previews, competing-client p95 of 12.5 ms (+1.7 ms over idle), zero errors and zero timeouts. All 38 acceptance IDs have passing evidence. R2 passed. Independent student acceptance and the R3 course checklist remain pending.
@@ -149,13 +149,23 @@ Reviewed the six W6 commits through `27426c1`. A fresh clone with Node 24.22.3, 
 The retained and fresh D-1 runs each contained 142 paired case records. Independent enumeration of each artifact’s 100 serialized tiny inputs reproduced its oracle and optimizer results. D-2 observed a 28 ms blocking interval in the rerun. P-01 served 100 distinct uncached previews with competing p95 of 12.3 ms (+1.6 ms over idle). Both runs’ competing percentiles agreed with their respective raw HTTP samples to reporting precision. The acceptance map had 38 distinct IDs. The proposal and deck PDFs contained one and six pages respectively.
 
 - **ISSUE-043 · Dense benchmark correctness.** In a second disposable clone, a control returned all passengers unassigned for inputs with 1,000 edges. The [maximum-bound benchmark](../scripts/eval-matching.ts) exited 0, reported zero discrepancies and recorded 0 matched at cost 0 with solver p95 of 0.003 ms. The unmodified candidate returned a feasible 50 matched at cost 113 and p95 of 1.944 ms. For the fixture’s 50 passengers, the lowest incoming costs sum to 113. Choosing those drivers assigns at most four passengers to any eight-seat driver, so this lower bound is attainable. Both real plans passed feasibility. Check the timed results outside the measured interval and require the control to fail.
-- **ISSUE-044 · Retained timing samples.** The [D-1 artifact](../eval/w6/d1-matching.json) stores the sample count and the two solvers’ median and p95 for the dense fixture. It omits the 100 individual timings per solver. The other 142 cases describe different inputs. Retain the dense samples and verify that their percentiles reproduce the summaries.
+- **ISSUE-044 · Retained timing samples.** The D-1 artifact at `27426c1:eval/w6/d1-matching.json` stores the sample count and the two solvers’ median and p95 for the dense fixture. It omits the 100 individual timings per solver. The other 142 cases describe different inputs. Retain the dense samples and verify that their percentiles reproduce the summaries.
 
 The independent result and rerun support R2 for the current candidate. These findings concern future benchmark runs and the ability to audit their reported timings. ISSUE-040–042 remain closed. Student reviews and the course checklist remain open under R3.
 
 ### W6 dense benchmark corrections
 
 Bounded request: address ISSUE-043 and ISSUE-044 in D-1. Validate each dense solver result outside the timed interval, retain the timing observations, repeat the skipped-work control, and verify that the published percentiles can be reproduced. Independent student review is pending.
+
+Fix `c15b268` was run from a fresh clone using Node 24.22.3 and the cached lockfile install. Every measured call stops its clock before feasibility and objective validation. Both solvers returned a feasible plan with 50 matches at cost 113 on all 100 dense samples. Independently summing the cheapest incoming edge for each passenger gives 113, and those choices use at most four of any driver’s eight seats.
+
+| Disposable-clone check | Observed result |
+|---|---|
+| Return all 50 passengers unassigned on the 1,000-edge optimizer input | `npm run eval:matching` exited 1 with exactly 100 objective discrepancies, one per dense optimizer sample. |
+| Corrupt one greedy assignment’s driver ID on measured sample 37 while retaining the claimed count and cost | Exit 1 with exactly one feasibility discrepancy on `dense/sample-37/greedy`. |
+| Restore the candidate and run D-1 again | Exit 0, zero discrepancies and oracle agreement on 100/100 seeds. Median/p95 were 1.629/1.854 ms for the optimizer and 0.705/0.801 ms for greedy. |
+
+The [retained W6 artifact](../eval/w6/d1-matching.json) contains 100 finite, nonnegative observations in acquisition order for each solver. A separate Python check sorted each raw array and exactly reproduced the stored median and p95 from its 50th and 95th observations. Both negative controls ran only in the disposable checkout. Matching passed 69/69, lint and typecheck exited 0. Database and browser suites were last verified in the [W6 follow-up review](#w6-follow-up-review). R2 stands, and R3 student tasks remain open.
 
 ## W0 setup verification
 

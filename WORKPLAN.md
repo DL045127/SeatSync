@@ -14,19 +14,19 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 
 | Field | Current value |
 |---|---|
-| Last updated | 2026-11-23 |
+| Last updated | 2026-11-24 |
 | Implementation baseline | `e2510d7` — finalized architecture contracts; Git already exists |
-| Handoff revision | Verified candidate `1a831f1` includes the W6 registration replay check, per-case D-1 evidence and demo browser command. |
+| Handoff revision | Full W6 reproduction through `27426c1`. D-1 checks and raw timing capture verified on `c15b268`. [W6 dense benchmark corrections](docs/EVIDENCE.md#w6-dense-benchmark-corrections) |
 | Completed | W0–W5 technical checkpoints, W6 clean reproduction, all 38 acceptance checks and the draft PDFs. R2 passed. |
 | Runnable state | Clean clone of `1a831f1` with fresh databases. Setup 2/2, matching 69/69, unit 33/33, database 1/1, concurrency 47/47, Chromium 12/12 and demo workflows 3/3. [W6 review corrections](docs/EVIDENCE.md#w6-review-corrections) |
 | Current checkpoint | W6 technical verification complete. Independent student review and external course actions remain open under R3. |
-| Next bounded task | Strengthen the dense D-1 benchmark and retain its timing samples (ISSUE-043–044). The student inspections and course checklist can proceed independently. |
+| Next bounded task | Complete the deferred student inspections and course checklist, including the Canvas template, rehearsal, booking and submissions. |
 | Optional follow-up | [One-city meeting-point demo](#stretch-goal--one-city-meeting-points) after the required checkpoints, if time permits. |
 | Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. The default shell still selects Node 26, which crashes on a missing simdjson dylib (ISSUE-002); prepend `$(brew --prefix node@24)/bin` to `PATH` for all project commands. Exact project versions are in `package.json`/`package-lock.json`. |
 | Blockers | ISSUE-004 remains a documented offline-reset limitation. Outstanding student acceptance and course actions block R3. |
 | Human review | The student accepted W1, reported the original W2 failure, and ran the corrected W2 suite. For A-4 the student observed matching previews across two tabs, persistence after reload and the stale-save review prompt, and accepted W3. A-3 (W2) and A-5 (W4) reviews are pending. For A-6 (W5), the three decisions are recorded. The student deferred independent inspection until after the technical work and will record what they checked before submission. [A-4 evidence](docs/EVIDENCE.md) |
 | External course tasks | Proposal and six-slide draft PDFs are prepared. Public GitHub read access was observed. Confirm team/partner access, Canvas deadlines and submissions, template, demo booking and student provenance. |
-| Latest validation | Follow-up review at `27426c1` reproduced all suites, the demo and all three evaluations. The dense solver returned the independently verified 50 matches at cost 113. Two D-1 benchmark findings remain open. [W6 follow-up review](docs/EVIDENCE.md#w6-follow-up-review) |
+| Latest validation | Dense D-1 passed on `c15b268` with 50 matches at cost 113, solver p95 1.854 ms, and 200 raw timings. Both defect controls failed as expected. Matching 69/69, lint and typecheck passed. [W6 dense benchmark corrections](docs/EVIDENCE.md#w6-dense-benchmark-corrections) |
 
 The W3 commit includes the preview and commit services and routes, browser pages and reducer, demo script, Playwright configuration, and workflow tests. The W4 commit adds `tests/concurrency/races-recovery.integration.test.ts` and four test-only hooks across the commit, preview, repository, and trip service modules. The W5 checkpoint adds the three evaluation scripts (`scripts/eval-matching.ts`, `scripts/eval-concurrency.ts`, `scripts/eval-responsiveness.ts`), their `eval:*` npm commands, and the retained artifacts under `eval/`; preview instrumentation and the test-mode telemetry endpoint also ship in the application.
 
@@ -82,8 +82,8 @@ Add implementation bugs as they are discovered.
 | ISSUE-040 / coverage | closed | Clearing a pending passenger operation and refreshing without retrying passed U-02 three times. | U-02 / R2 | — | Fix `1a831f1`. Verified the original receipt, same wire key/body and unchanged withdrawn state. The skipped-POST control failed. [W6 review corrections](docs/EVIDENCE.md#w6-review-corrections) |
 | ISSUE-041 / evidence | closed | D-1 retains aggregate tiny-oracle counts and omits per-case timings. | W6 evaluation traceability | — | Fix `1a831f1`. Validated all 100 serialized oracle inputs independently, plus feasibility and timings for both algorithms on 142 cases. [W6 review corrections](docs/EVIDENCE.md#w6-review-corrections) |
 | ISSUE-042 / documentation | closed | Fresh README sequence runs matching before installation. The automated demo-DB browser rehearsal uses an untracked config. | W6 clean reproduction | — | Fix `1a831f1`. Fresh install followed by setup and matching passed. The tracked demo command passed 3/3 on port 3000. [W6 review corrections](docs/EVIDENCE.md#w6-review-corrections) |
-| ISSUE-043 / evaluation | open | With an empty result for the 1,000-edge input, D-1 still exited 0 and reported zero discrepancies. | Dense timing run can reward skipped solver work. Current candidate independently verified. | Assert dense plan feasibility and the known 50/113 optimum outside the timed interval. Repeat the control. | [W6 follow-up review](docs/EVIDENCE.md#w6-follow-up-review) |
-| ISSUE-044 / evidence | open | The D-1 dense run retains medians, p95s and count. Its individual sample times are discarded. | Cannot recompute the historical solver p95 from the artifact. | Retain both sample arrays and verify the derived percentiles. | [W6 follow-up review](docs/EVIDENCE.md#w6-follow-up-review) |
+| ISSUE-043 / evaluation | closed | With an empty result for the 1,000-edge input, D-1 previously exited 0. | Skipped solver work could pass the timing gate. | — | Fix `c15b268`. The empty-plan control failed on all 100 optimizer samples. A single infeasible greedy sample also failed. [W6 dense benchmark corrections](docs/EVIDENCE.md#w6-dense-benchmark-corrections) |
+| ISSUE-044 / evidence | closed | The prior dense artifact retained only medians, p95s and count. | Historical timing summaries could not be recomputed. | — | Fix `c15b268`. Both sets of 100 raw timings retained. Independently recomputed both medians and p95s exactly. [W6 dense benchmark corrections](docs/EVIDENCE.md#w6-dense-benchmark-corrections) |
 
 Use states `open`, `in progress`, `needs verification`, `closed`, or `deferred`. For a bug, include starting data, steps/command, expected behavior, and actual behavior, or link to that reproduction in EVIDENCE. Label a suspected cause as a hypothesis until investigated. For a question, record the decision needed and what work depends on it.
 
