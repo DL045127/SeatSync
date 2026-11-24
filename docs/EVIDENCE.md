@@ -100,6 +100,8 @@ On 2026-11-23 the reviewer cloned `2d4768b` with `git clone --no-local` into a t
 
 The student asked to proceed with W6. Retain the audit, focused C-12 regression and draft PDFs in Git. Reproduce that revision from a fresh clone and empty designated databases, verify all 38 acceptance IDs, and record the exact candidate and results. Student acceptance and submission remain pending.
 
+On the first W6 candidate (`f306937`), 47/47 concurrency cases passed. Chromium passed 11/12. The lost-creation test sometimes asserted the committed ID while the pending banner was already visible but the intercepted POST had yet to finish. On that failure, closing the context disposed the pending response. The correction waits for the browser’s unknown-outcome alert, which is rendered after it consumes the simulated 503. The test still checks the original key, trip ID and persisted state. ISSUE-039 tracks verification.
+
 ## W0 setup verification
 
 Observed on local macOS with Node 24.22.3, npm 11.19.1, and Docker Compose 5.5.1. Code is the uncommitted W0 diff based on `b88d98a`. The user previously confirmed registry and Docker access in the regular macOS terminal. The checks below ran in the workspace session.

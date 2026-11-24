@@ -138,7 +138,9 @@ test("ISSUE-021: blocked storage sends zero creation requests; a lost creation r
     await page.getByLabel("Destination").fill("Union");
     await page.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
     await page.getByRole("button", { name: "Create trip" }).click();
-    // The suppressed reply leaves a recoverable pending creation.
+    // The pending banner also appears before the POST completes. Wait for the
+    // simulated 503 to reach the browser before inspecting the committed id.
+    await expect(page.getByRole("alert")).toHaveText("Outcome unknown. Retry the same creation.");
     await expect(page.getByText(/unresolved creation/i)).toBeVisible();
     expect(committedId).toBeDefined();
 
