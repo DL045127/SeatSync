@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**W5 is committed at `2d4768b`.** The trip workflow, race and recovery checks, and matching, concurrency and responsiveness evaluations passed. W6 reproduced the candidate from a fresh checkout and empty databases. The [38-check results](docs/EVIDENCE.md#validation-results--vr-1-through-vr-3-rr-4) include one additional cross-trip preview check in the W6 diff. Student review and submission tasks remain open. [Current handoff](WORKPLAN.md)
+**Technical release candidate `5d86e5b` passed W6 clean-checkout verification.** The production build, browser workflow, concurrency tests and evaluations passed on fresh demo/test databases. All 38 acceptance checks are accounted for. Student review and course submissions remain open. [Verification results](docs/EVIDENCE.md#w6-release-candidate-verification) · [Current handoff](WORKPLAN.md)
 
 ## Documentation
 

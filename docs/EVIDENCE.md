@@ -1,6 +1,6 @@
 # Project evidence
 
-**Status:** W6 technical verification of candidate `2d4768b` and the additional C-12 regression are recorded below. Submission and outstanding student reviews are pending. Design and planned checks live in [ARCHITECTURE.md](ARCHITECTURE.md).
+**Status:** W6 technical verification passed for release candidate `5d86e5b`, including the C-12 regression and the corrected lost-creation browser case. Submission and outstanding student reviews are pending. Design and planned checks live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The [course specification](../PROJECT_SPEC.md) requires the content below, but does not require separate documents for each category. These are working records for the final slide deck; DEL-3 does not require a separate written report.
 
@@ -8,7 +8,7 @@ The [course specification](../PROJECT_SPEC.md) requires the content below, but d
 
 For each significant claim, retain the starting state, exact command/interaction, independently established expectation and derivation, actual output, and code/test/commit. Record failures and subsequent verification where relevant. Agent-reported success alone is not independent acceptance (AR-3).
 
-The table maps all 38 IDs in the [acceptance contract](ARCHITECTURE.md#7-validation-and-demo-contract) to the named test or benchmark and its observed result. Run each linked suite with the npm command shown. The [candidate audit](#w6-candidate-audit) records the clean starting state, exact revision, suite totals and the separate C-12 rerun.
+The table maps all 38 IDs in the [acceptance contract](ARCHITECTURE.md#7-validation-and-demo-contract) to the named test or benchmark and its observed result. Run each linked suite with the npm command shown. The [candidate audit](#w6-candidate-audit) records the initial W5 reproduction. The [W6 release-candidate verification](#w6-release-candidate-verification) covers the complete table at `5d86e5b`.
 
 | Acceptance ID | Reproduction command and executable check | Observed result |
 |---|---|---|
@@ -49,7 +49,7 @@ The table maps all 38 IDs in the [acceptance contract](ARCHITECTURE.md#7-validat
 | U-02 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) | Passed. Reload after an uncertain mutation retained the original key and body. Replay resolved the same operation. |
 | U-03 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) | Passed. Unavailable session storage blocked writes before transmission while reading and previewing still worked. |
 | U-04 | [`npm run test:unit`](../tests/unit/reducer.test.ts) | Passed. A matching finalized failure released the pending operation. Unknown outcomes and old-key replies preserved it, and Commit remained disabled while a write or refresh was pending. |
-| P-01 | [`npm run eval:responsiveness`](../scripts/eval-responsiveness.ts) · [retained W5 run](../eval/p01-responsiveness.json) | Passed. 100 fresh previews on the 20/50 fixture, zero cache hits. The competing client’s p95 was 11.7 ms (+1.5 ms over idle), with zero errors and timeouts. |
+| P-01 | [`npm run eval:responsiveness`](../scripts/eval-responsiveness.ts) · [W6 run](../eval/w6/p01-responsiveness.json) | Passed. 100 fresh previews on the 20/50 fixture, zero cache hits. The competing client’s p95 was 12 ms (+1.4 ms over idle), with zero errors and timeouts. |
 
 Earlier supporting checks from the W1 record:
 
@@ -100,7 +100,22 @@ On 2026-11-23 the reviewer cloned `2d4768b` with `git clone --no-local` into a t
 
 The student asked to proceed with W6. Retain the audit, focused C-12 regression and draft PDFs in Git. Reproduce that revision from a fresh clone and empty designated databases, verify all 38 acceptance IDs, and record the exact candidate and results. Student acceptance and submission remain pending.
 
-On the first W6 candidate (`f306937`), 47/47 concurrency cases passed. Chromium passed 11/12. The lost-creation test sometimes asserted the committed ID while the pending banner was already visible but the intercepted POST had yet to finish. On that failure, closing the context disposed the pending response. The correction waits for the browser’s unknown-outcome alert, which is rendered after it consumes the simulated 503. The test still checks the original key, trip ID and persisted state. ISSUE-039 tracks verification.
+On the first W6 candidate (`f306937`), 47/47 concurrency cases passed. Chromium passed 11/12. The lost-creation test sometimes asserted the committed ID while the pending banner was already visible but the intercepted POST had yet to finish. On that failure, closing the context disposed the pending response. The correction waits for the browser’s unknown-outcome alert, which is rendered after it consumes the simulated 503. The test still checks the original key, trip ID and persisted state. The verification below closes ISSUE-039.
+
+An intermediate fix (commit `0bcd81c`) reached the expected 503 handler, but its alert selector also matched the Next.js route announcer. The final test waits for the exact recovery message.
+
+**Technical outcome.** Candidate `5d86e5b` includes the C-12 cross-trip regression and ISSUE-039 test fix. A separate clean clone used only the tracked env example, Node 24.22.3, the lockfile, the host npm/Chromium caches and a new isolated PostgreSQL volume. The demo database was migrated twice and the test database once. Both began empty. All 38 architecture IDs have one row in the acceptance table and passed on this candidate.
+
+| Check | Observed on `5d86e5b` |
+|---|---|
+| Setup, matching, unit, database, concurrency and full Chromium suites | 2/2, 69/69, 33/33, 1/1, 47/47 and 12/12 passed, with zero skips. |
+| ISSUE-039 regression | `npm run test:e2e -- --grep "a lost creation retries" --repeat-each=10` passed 10/10. |
+| Lint, typecheck, production build and readiness | All exited 0. The readiness check observed healthy production, 503 on dataset drift and healthy development after reset. |
+| Production demo database | `npm run demo` reset the demo database and served the creation page and health endpoint. Chromium replayed the three WF scenarios against the running demo on port 3000. All passed, including the cost-7 save/reload, rematch and stale-save prompt. |
+| D-1 and D-2 | The solver matched the oracle on 100/100 seeds with zero discrepancies and a maximum-bound p95 of 1.936 ms. The long-lock run recorded a 28 ms blocking interval. Both stale-version checks passed. [Matching artifact](../eval/w6/d1-matching.json) · [Lock artifact](../eval/w6/d2-concurrency.json) |
+| P-01 | The 20-driver, 50-passenger run served 100 distinct uncached previews. Competing p95 was 12 ms and the change from idle was +1.4 ms, with zero errors or timeouts. [Responsiveness artifact](../eval/w6/p01-responsiveness.json) |
+
+The technical release gate R2 passed. Student inspection, attribution confirmation, final template and submissions remain open under R3. The demo and isolated database service were stopped after verification.
 
 ## W0 setup verification
 
@@ -846,6 +861,6 @@ Record dependency versions, reused source URLs and starting versions/commits, st
 | Codex | W3 complete workflow, 2026-11-24 | Implemented preview publication and commit-by-preview services and routes, the pure version/preview reducer, the create and trip pages with session-storage recovery, the preview/commit integration suite, the reducer unit tests, and the Playwright browser suite; added `npm run demo` and the README walk-through. | A-4 above. The host suites passed. ISSUE-025 closed after the [fifth-round verification](#w3-fifth-round-verification). The student accepted W3 after the two-tab check. |
 | Codex-assisted W4 | `8f3187a` — test: verify W4 trip races and commit recovery | Added deterministic PostgreSQL interleavings, a commit-guard mutant, rollback and acknowledgement-loss checks. | A-5 student review pending. |
 | Codex-assisted W5 | `2d4768b` — test: evaluate W5 matching, lock contention, and responsiveness | Added the evaluation harnesses, bounded preview telemetry and retained D-1, D-2 and P-01 artifacts. | Student approved all three judgments. A-6 inspection is deferred. |
-| Codex-assisted W6 preparation | Working diff on `2d4768b` | Reproduced the candidate, mapped the acceptance IDs, added C-12 coverage and prepared proposal and presentation PDFs from repository evidence. | Student review of course materials pending. |
+| Codex-assisted W6 preparation | Audit `f306937` and browser-test correction `5d86e5b` | Reproduced the candidate, mapped the acceptance IDs, added C-12 coverage and prepared proposal and presentation PDFs from repository evidence. | Student review of course materials pending. |
 
 The [proposal PDF](../deliverables/proposal.pdf) and [presentation draft](../deliverables/presentation-draft.pdf) are available for student review. The six-slide draft follows the published slide topics. Applying the official Canvas template, rehearsing, booking and submitting remain pending. See [PROJECT_SPEC.md](../PROJECT_SPEC.md) for the full deliverable and acceptance checklist.
