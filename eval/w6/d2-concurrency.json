@@ -3,9 +3,9 @@
   "algorithm": "mincostflow-v1",
   "node": "v24.22.3",
   "platform": "darwin arm64",
-  "commit": "5d86e5b5e1d91bd0e5331db7f71b51030c1358d7",
+  "commit": "1a831f1eae5ec861ca6a421d640b0cc2a701fd0c",
   "watchdogMs": 5000,
-  "generatedAt": "2026-11-24T04:46:59.033Z",
+  "generatedAt": "2026-11-24T05:06:36.068Z",
   "outsideLock": {
     "variant": "outside-lock (initial, production)",
     "cancellationCommittedDuringCompute": true,
@@ -17,11 +17,11 @@
   },
   "longLock": {
     "variant": "long-lock (harness alternative)",
-    "holderPid": 440,
-    "cancellationPid": 439,
+    "holderPid": 433,
+    "cancellationPid": 432,
     "cancellationBlockedByHolder": true,
     "observedBlockerPids": [
-      440
+      433
     ],
     "blockDetectMs": 19,
     "blockingIntervalMs": 28,

@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**The W6 release candidate builds and runs from a clean checkout.** The production build, browser workflow, concurrency tests and evaluations passed on fresh demo/test databases. The acceptance map lists all 38 checks. U-02 needs stronger browser replay evidence before technical signoff. Student review and course submissions remain open. [Review results](docs/EVIDENCE.md#w6-technical-review) · [Current handoff](WORKPLAN.md)
+**The W6 release candidate builds and runs from a clean checkout.** The production build, browser workflow, concurrency tests and evaluations passed on fresh demo/test databases. All 38 acceptance checks have passing evidence on `1a831f1`. Student review and course submissions remain open. [Verification results](docs/EVIDENCE.md#w6-review-corrections) · [Current handoff](WORKPLAN.md)
 
 ## Documentation
 
