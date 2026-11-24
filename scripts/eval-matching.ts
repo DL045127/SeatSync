@@ -212,7 +212,12 @@ function sizeClasses(): Array<Record<string, unknown>> {
   return out;
 }
 
-function maxBoundTiming(): Record<string, unknown> {
+function summarizeTimings(rawMs: number[]) {
+  const sorted = [...rawMs].sort((a, b) => a - b);
+  return { rawMs, medianMs: percentile(sorted, 50), p95Ms: percentile(sorted, 95) };
+}
+
+function maxBoundTiming() {
   // Dense worst-case at the supported bounds (20 drivers, 50 passengers).
   const drivers = Array.from({ length: 20 }, (_, i) => ({ id: seededId("d", i), seatCapacity: 8 }));
   const passengers = Array.from({ length: 50 }, (_, j) => ({ id: seededId("p", j) }));
@@ -224,40 +229,43 @@ function maxBoundTiming(): Record<string, unknown> {
   });
   const input: MatchInput = { drivers, passengers, edges };
 
-  for (let i = 0; i < 20; i++) minCostFlowMatch(input); // warmup
+  // Each passenger's cheapest edge is unique. Those 50 edges cost 113 in
+  // total and use at most four seats per driver, so both algorithms attain it.
+  const expected = { matched: 50, cost: 113 };
+  for (let i = 0; i < 20; i++) {
+    minCostFlowMatch(input);
+    greedyMatch(input);
+  }
   const flowSamples: number[] = [];
   const greedySamples: number[] = [];
   let matched = 0;
   let cost = 0;
   for (let i = 0; i < 100; i++) {
-    const t0 = performance.now();
-    const r = minCostFlowMatch(input);
-    flowSamples.push(performance.now() - t0);
-    matched = r.matchedCount;
-    cost = r.totalCost;
-    const g0 = performance.now();
-    greedyMatch(input);
-    greedySamples.push(performance.now() - g0);
+    const label = `dense/sample-${i + 1}`;
+    // measurePlan stops the clock before checking the returned assignments.
+    const flow = measurePlan(input, minCostFlowMatch, `${label}/optimizer`);
+    const greedy = measurePlan(input, greedyMatch, `${label}/greedy`);
+    for (const [algorithm, plan] of [["optimizer", flow], ["greedy", greedy]] as const) {
+      check(plan.matched === expected.matched && plan.cost === expected.cost,
+        `${label}/${algorithm}`, `expected ${expected.matched}/${expected.cost}, got ${plan.matched}/${plan.cost}`);
+    }
+    flowSamples.push(flow.runtimeMs);
+    greedySamples.push(greedy.runtimeMs);
+    matched = flow.matched;
+    cost = flow.cost;
   }
-  flowSamples.sort((a, b) => a - b);
-  greedySamples.sort((a, b) => a - b);
-  const p95 = percentile(flowSamples, 95);
-  check(p95 <= 100, "timing", `optimizer p95 ${p95.toFixed(3)} ms exceeds the 100 ms target`);
+  const optimizer = summarizeTimings(flowSamples);
+  check(optimizer.p95Ms <= 100, "timing", `optimizer p95 ${optimizer.p95Ms.toFixed(3)} ms exceeds the 100 ms target`);
   return {
     drivers: drivers.length,
     passengers: passengers.length,
     edges: edges.length,
+    expected,
     matchedCount: matched,
     totalCost: cost,
     samples: flowSamples.length,
-    optimizer: {
-      medianMs: Number(percentile(flowSamples, 50).toFixed(3)),
-      p95Ms: Number(p95.toFixed(3)),
-    },
-    greedy: {
-      medianMs: Number(percentile(greedySamples, 50).toFixed(3)),
-      p95Ms: Number(percentile(greedySamples, 95).toFixed(3)),
-    },
+    optimizer,
+    greedy: summarizeTimings(greedySamples),
     targetP95Ms: 100,
   };
 }
@@ -287,7 +295,7 @@ function main(): void {
     {
       experiment: artifact.experiment,
       optimizerAgreesWithOracle: `${(artifact.oracleSeeds as { optimizerAgrees: number }).optimizerAgrees}/100`,
-      maxBoundP95Ms: (artifact.maxBoundTiming as { optimizer: { p95Ms: number } }).optimizer.p95Ms,
+      maxBoundP95Ms: Number(artifact.maxBoundTiming.optimizer.p95Ms.toFixed(3)),
       targetP95Ms: 100,
       discrepancies: discrepancies.length,
       pass: artifact.pass,

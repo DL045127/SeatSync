@@ -141,6 +141,22 @@ Candidate `1a831f1` was cloned into an empty directory with its own dependencies
 
 The full clean run passed database 1/1, unit 33/33, concurrency 47/47, and Chromium 12/12, plus lint, typecheck, build and readiness. [D-2](../eval/w6/d2-concurrency.json) passed both lock variants. [P-01](../eval/w6/p01-responsiveness.json) recorded 100 distinct uncached previews, competing-client p95 of 12.5 ms (+1.7 ms over idle), zero errors and zero timeouts. All 38 acceptance IDs have passing evidence. R2 passed. Independent student acceptance and the R3 course checklist remain pending.
 
+
+### W6 follow-up review
+
+Reviewed the six W6 commits through `27426c1`. A fresh clone with Node 24.22.3, the host npm and Chromium caches, and a new Compose volume reproduced setup 2/2, matching 69/69, unit 33/33, database 1/1, concurrency 47/47 and Chromium 12/12. Lint, typecheck, production build, readiness and all three evaluations passed. The demo command passed 3/3 against port 3000. The omitted-retry control failed waiting for the registration response, and restored U-02 passed 5/5. The demo and isolated database were stopped after verification.
+
+The retained and fresh D-1 runs each contained 142 paired case records. Independent enumeration of each artifact’s 100 serialized tiny inputs reproduced its oracle and optimizer results. D-2 observed a 28 ms blocking interval in the rerun. P-01 served 100 distinct uncached previews with competing p95 of 12.3 ms (+1.6 ms over idle). Both runs’ competing percentiles agreed with their respective raw HTTP samples to reporting precision. The acceptance map had 38 distinct IDs. The proposal and deck PDFs contained one and six pages respectively.
+
+- **ISSUE-043 · Dense benchmark correctness.** In a second disposable clone, a control returned all passengers unassigned for inputs with 1,000 edges. The [maximum-bound benchmark](../scripts/eval-matching.ts) exited 0, reported zero discrepancies and recorded 0 matched at cost 0 with solver p95 of 0.003 ms. The unmodified candidate returned a feasible 50 matched at cost 113 and p95 of 1.944 ms. For the fixture’s 50 passengers, the lowest incoming costs sum to 113. Choosing those drivers assigns at most four passengers to any eight-seat driver, so this lower bound is attainable. Both real plans passed feasibility. Check the timed results outside the measured interval and require the control to fail.
+- **ISSUE-044 · Retained timing samples.** The [D-1 artifact](../eval/w6/d1-matching.json) stores the sample count and the two solvers’ median and p95 for the dense fixture. It omits the 100 individual timings per solver. The other 142 cases describe different inputs. Retain the dense samples and verify that their percentiles reproduce the summaries.
+
+The independent result and rerun support R2 for the current candidate. These findings concern future benchmark runs and the ability to audit their reported timings. ISSUE-040–042 remain closed. Student reviews and the course checklist remain open under R3.
+
+### W6 dense benchmark corrections
+
+Bounded request: address ISSUE-043 and ISSUE-044 in D-1. Validate each dense solver result outside the timed interval, retain the timing observations, repeat the skipped-work control, and verify that the published percentiles can be reproduced. Independent student review is pending.
+
 ## W0 setup verification
 
 Observed on local macOS with Node 24.22.3, npm 11.19.1, and Docker Compose 5.5.1. Code is the uncommitted W0 diff based on `b88d98a`. The user previously confirmed registry and Docker access in the regular macOS terminal. The checks below ran in the workspace session.
