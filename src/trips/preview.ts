@@ -6,8 +6,10 @@
 // (trip_id, base_version, algorithm_version) constraint. Preview never changes
 // the trip version or status.
 
+import { performance } from "node:perf_hooks";
 import type { Pool, PoolClient } from "pg";
 import { TerminalBusinessError, TransientFailure } from "../contracts/errors.ts";
+import { recordPreview } from "./preview-telemetry.ts";
 import { normalizeUuid } from "../contracts/index.ts";
 import {
   isRetryableQueryError,
@@ -218,10 +220,15 @@ async function publishPreviewInner(
     return { version: trip.version, existing, roster };
   });
 
-  if (snapshot.existing) return toResponse(snapshot.existing);
+  if (snapshot.existing) {
+    recordPreview({ cacheHit: true, matcherMs: null });
+    return toResponse(snapshot.existing);
+  }
 
   // Step 2: compute optimal and greedy outside any lock; validated internally.
+  const matcherStart = performance.now();
   const computation = computeMatch(projectMatchInput(snapshot.roster!));
+  recordPreview({ cacheHit: false, matcherMs: Number((performance.now() - matcherStart).toFixed(3)) });
 
   // Test-only barrier (C-13). Fires in the stale window AFTER the read snapshot
   // and compute, BEFORE the publication lock, so a test can commit a roster

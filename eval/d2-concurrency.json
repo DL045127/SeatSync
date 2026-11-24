@@ -1,0 +1,44 @@
+{
+  "experiment": "D-2 outside-lock versus long-lock preview generation",
+  "algorithm": "mincostflow-v1",
+  "node": "v24.22.3",
+  "platform": "darwin arm64",
+  "commit": "8f3187a27c0ec41c8fca280fa993c324f82b456c",
+  "watchdogMs": 5000,
+  "generatedAt": "2026-11-23T23:55:52.082Z",
+  "outsideLock": {
+    "variant": "outside-lock (initial, production)",
+    "cancellationCommittedDuringCompute": true,
+    "publishOutcome": "rejected-409/STALE_VERSION",
+    "publishErrorCode": "STALE_VERSION",
+    "staleRowsForStartVersion": 0,
+    "conflicts": 1,
+    "invariantHeld": true
+  },
+  "longLock": {
+    "variant": "long-lock (harness alternative)",
+    "holderPid": 29647,
+    "cancellationPid": 29648,
+    "cancellationBlockedByHolder": true,
+    "observedBlockerPids": [
+      29647
+    ],
+    "blockDetectMs": 19,
+    "blockingIntervalMs": 28,
+    "cancellationOutcome": 200,
+    "cancellationRetries": 0,
+    "cancelledDriverActiveAfter": false,
+    "publishedBaseVersion": 3,
+    "tripVersionAfterCancel": 4,
+    "staleCommitOutcome": "409/STALE_VERSION",
+    "finalDurableState": {
+      "version": 4,
+      "status": "open",
+      "assignments": 0
+    },
+    "conflicts": 1,
+    "invariantHeld": true
+  },
+  "conclusion": "Both variants preserve invariants: the outside-lock publish rejects a stale result with 409 and writes no stale row; the long-lock publish blocks the concurrent writer, and its stale preview is rejected at commit. Keep short locks — writes progress during the gate and stale results are rejected. Fewer conflicts alone do not establish a better design; CPU responsiveness is measured separately by P-01.",
+  "pass": true
+}

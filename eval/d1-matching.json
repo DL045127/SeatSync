@@ -1,0 +1,687 @@
+{
+  "experiment": "D-1 exact matching versus greedy",
+  "algorithm": "mincostflow-v1",
+  "node": "v24.22.3",
+  "platform": "darwin arm64",
+  "commit": "8f3187a27c0ec41c8fca280fa993c324f82b456c",
+  "generatedAt": "2026-11-23T23:55:51.064Z",
+  "fixtures": [
+    {
+      "id": "M-01",
+      "optimizer": {
+        "matched": 2,
+        "cost": 4
+      },
+      "greedy": {
+        "matched": 2,
+        "cost": 101
+      },
+      "expectedOptimal": {
+        "matched": 2,
+        "cost": 4
+      },
+      "expectedGreedy": {
+        "matched": 2,
+        "cost": 101
+      }
+    },
+    {
+      "id": "M-08",
+      "optimizer": {
+        "matched": 2,
+        "cost": 3
+      },
+      "greedy": {
+        "matched": 1,
+        "cost": 1
+      },
+      "expectedOptimal": {
+        "matched": 2,
+        "cost": 3
+      },
+      "expectedGreedy": {
+        "matched": 1,
+        "cost": 1
+      }
+    }
+  ],
+  "oracleSeeds": {
+    "seeds": 100,
+    "optimizerAgrees": 100,
+    "greedySameCoverage": 93,
+    "greedyWorseCost": 20
+  },
+  "sizeClasses": [
+    {
+      "passengerClass": 5,
+      "exactPassengers": 5,
+      "exactDrivers": 2,
+      "seeds": 10,
+      "optimizerMatchedTotal": 32,
+      "greedyMatchedTotal": 32,
+      "equalCardinalityCount": 10,
+      "greedyCostlierAtEqualCardinality": 2,
+      "totalCostGapAtEqualCardinality": 97,
+      "perSeed": [
+        {
+          "seed": 1500,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 3,
+          "optimizer": {
+            "matched": 2,
+            "cost": 105
+          },
+          "greedy": {
+            "matched": 2,
+            "cost": 109
+          }
+        },
+        {
+          "seed": 1501,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 5,
+          "optimizer": {
+            "matched": 2,
+            "cost": 25
+          },
+          "greedy": {
+            "matched": 2,
+            "cost": 25
+          }
+        },
+        {
+          "seed": 1502,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 4,
+          "optimizer": {
+            "matched": 3,
+            "cost": 150
+          },
+          "greedy": {
+            "matched": 3,
+            "cost": 150
+          }
+        },
+        {
+          "seed": 1503,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 3,
+          "optimizer": {
+            "matched": 2,
+            "cost": 96
+          },
+          "greedy": {
+            "matched": 2,
+            "cost": 96
+          }
+        },
+        {
+          "seed": 1504,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 6,
+          "optimizer": {
+            "matched": 5,
+            "cost": 192
+          },
+          "greedy": {
+            "matched": 5,
+            "cost": 192
+          }
+        },
+        {
+          "seed": 1505,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 2,
+          "optimizer": {
+            "matched": 2,
+            "cost": 71
+          },
+          "greedy": {
+            "matched": 2,
+            "cost": 71
+          }
+        },
+        {
+          "seed": 1506,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 5,
+          "optimizer": {
+            "matched": 4,
+            "cost": 231
+          },
+          "greedy": {
+            "matched": 4,
+            "cost": 231
+          }
+        },
+        {
+          "seed": 1507,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 6,
+          "optimizer": {
+            "matched": 5,
+            "cost": 223
+          },
+          "greedy": {
+            "matched": 5,
+            "cost": 223
+          }
+        },
+        {
+          "seed": 1508,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 9,
+          "optimizer": {
+            "matched": 3,
+            "cost": 72
+          },
+          "greedy": {
+            "matched": 3,
+            "cost": 165
+          }
+        },
+        {
+          "seed": 1509,
+          "drivers": 2,
+          "passengers": 5,
+          "edges": 6,
+          "optimizer": {
+            "matched": 4,
+            "cost": 101
+          },
+          "greedy": {
+            "matched": 4,
+            "cost": 101
+          }
+        }
+      ]
+    },
+    {
+      "passengerClass": 15,
+      "exactPassengers": 15,
+      "exactDrivers": 5,
+      "seeds": 10,
+      "optimizerMatchedTotal": 116,
+      "greedyMatchedTotal": 109,
+      "equalCardinalityCount": 5,
+      "greedyCostlierAtEqualCardinality": 5,
+      "totalCostGapAtEqualCardinality": 530,
+      "perSeed": [
+        {
+          "seed": 2500,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 31,
+          "optimizer": {
+            "matched": 12,
+            "cost": 559
+          },
+          "greedy": {
+            "matched": 12,
+            "cost": 640
+          }
+        },
+        {
+          "seed": 2501,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 26,
+          "optimizer": {
+            "matched": 11,
+            "cost": 324
+          },
+          "greedy": {
+            "matched": 11,
+            "cost": 449
+          }
+        },
+        {
+          "seed": 2502,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 30,
+          "optimizer": {
+            "matched": 11,
+            "cost": 433
+          },
+          "greedy": {
+            "matched": 11,
+            "cost": 606
+          }
+        },
+        {
+          "seed": 2503,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 29,
+          "optimizer": {
+            "matched": 14,
+            "cost": 625
+          },
+          "greedy": {
+            "matched": 13,
+            "cost": 571
+          }
+        },
+        {
+          "seed": 2504,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 32,
+          "optimizer": {
+            "matched": 11,
+            "cost": 273
+          },
+          "greedy": {
+            "matched": 10,
+            "cost": 419
+          }
+        },
+        {
+          "seed": 2505,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 28,
+          "optimizer": {
+            "matched": 13,
+            "cost": 581
+          },
+          "greedy": {
+            "matched": 11,
+            "cost": 405
+          }
+        },
+        {
+          "seed": 2506,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 31,
+          "optimizer": {
+            "matched": 6,
+            "cost": 121
+          },
+          "greedy": {
+            "matched": 6,
+            "cost": 170
+          }
+        },
+        {
+          "seed": 2507,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 33,
+          "optimizer": {
+            "matched": 13,
+            "cost": 619
+          },
+          "greedy": {
+            "matched": 12,
+            "cost": 523
+          }
+        },
+        {
+          "seed": 2508,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 35,
+          "optimizer": {
+            "matched": 11,
+            "cost": 407
+          },
+          "greedy": {
+            "matched": 11,
+            "cost": 509
+          }
+        },
+        {
+          "seed": 2509,
+          "drivers": 5,
+          "passengers": 15,
+          "edges": 31,
+          "optimizer": {
+            "matched": 14,
+            "cost": 641
+          },
+          "greedy": {
+            "matched": 12,
+            "cost": 428
+          }
+        }
+      ]
+    },
+    {
+      "passengerClass": 30,
+      "exactPassengers": 30,
+      "exactDrivers": 10,
+      "seeds": 10,
+      "optimizerMatchedTotal": 235,
+      "greedyMatchedTotal": 232,
+      "equalCardinalityCount": 8,
+      "greedyCostlierAtEqualCardinality": 8,
+      "totalCostGapAtEqualCardinality": 2381,
+      "perSeed": [
+        {
+          "seed": 4000,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 114,
+          "optimizer": {
+            "matched": 24,
+            "cost": 310
+          },
+          "greedy": {
+            "matched": 24,
+            "cost": 604
+          }
+        },
+        {
+          "seed": 4001,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 122,
+          "optimizer": {
+            "matched": 26,
+            "cost": 565
+          },
+          "greedy": {
+            "matched": 26,
+            "cost": 767
+          }
+        },
+        {
+          "seed": 4002,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 119,
+          "optimizer": {
+            "matched": 16,
+            "cost": 265
+          },
+          "greedy": {
+            "matched": 16,
+            "cost": 592
+          }
+        },
+        {
+          "seed": 4003,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 108,
+          "optimizer": {
+            "matched": 27,
+            "cost": 583
+          },
+          "greedy": {
+            "matched": 27,
+            "cost": 813
+          }
+        },
+        {
+          "seed": 4004,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 119,
+          "optimizer": {
+            "matched": 21,
+            "cost": 314
+          },
+          "greedy": {
+            "matched": 21,
+            "cost": 638
+          }
+        },
+        {
+          "seed": 4005,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 122,
+          "optimizer": {
+            "matched": 23,
+            "cost": 303
+          },
+          "greedy": {
+            "matched": 23,
+            "cost": 559
+          }
+        },
+        {
+          "seed": 4006,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 95,
+          "optimizer": {
+            "matched": 25,
+            "cost": 635
+          },
+          "greedy": {
+            "matched": 24,
+            "cost": 730
+          }
+        },
+        {
+          "seed": 4007,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 126,
+          "optimizer": {
+            "matched": 24,
+            "cost": 390
+          },
+          "greedy": {
+            "matched": 24,
+            "cost": 683
+          }
+        },
+        {
+          "seed": 4008,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 110,
+          "optimizer": {
+            "matched": 28,
+            "cost": 700
+          },
+          "greedy": {
+            "matched": 26,
+            "cost": 821
+          }
+        },
+        {
+          "seed": 4009,
+          "drivers": 10,
+          "passengers": 30,
+          "edges": 126,
+          "optimizer": {
+            "matched": 21,
+            "cost": 219
+          },
+          "greedy": {
+            "matched": 21,
+            "cost": 674
+          }
+        }
+      ]
+    },
+    {
+      "passengerClass": 50,
+      "exactPassengers": 50,
+      "exactDrivers": 17,
+      "seeds": 10,
+      "optimizerMatchedTotal": 402,
+      "greedyMatchedTotal": 401,
+      "equalCardinalityCount": 9,
+      "greedyCostlierAtEqualCardinality": 9,
+      "totalCostGapAtEqualCardinality": 3685,
+      "perSeed": [
+        {
+          "seed": 6000,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 336,
+          "optimizer": {
+            "matched": 36,
+            "cost": 377
+          },
+          "greedy": {
+            "matched": 36,
+            "cost": 828
+          }
+        },
+        {
+          "seed": 6001,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 350,
+          "optimizer": {
+            "matched": 41,
+            "cost": 398
+          },
+          "greedy": {
+            "matched": 41,
+            "cost": 565
+          }
+        },
+        {
+          "seed": 6002,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 353,
+          "optimizer": {
+            "matched": 44,
+            "cost": 542
+          },
+          "greedy": {
+            "matched": 43,
+            "cost": 815
+          }
+        },
+        {
+          "seed": 6003,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 328,
+          "optimizer": {
+            "matched": 47,
+            "cost": 808
+          },
+          "greedy": {
+            "matched": 47,
+            "cost": 1320
+          }
+        },
+        {
+          "seed": 6004,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 339,
+          "optimizer": {
+            "matched": 38,
+            "cost": 448
+          },
+          "greedy": {
+            "matched": 38,
+            "cost": 967
+          }
+        },
+        {
+          "seed": 6005,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 338,
+          "optimizer": {
+            "matched": 33,
+            "cost": 330
+          },
+          "greedy": {
+            "matched": 33,
+            "cost": 939
+          }
+        },
+        {
+          "seed": 6006,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 341,
+          "optimizer": {
+            "matched": 41,
+            "cost": 511
+          },
+          "greedy": {
+            "matched": 41,
+            "cost": 861
+          }
+        },
+        {
+          "seed": 6007,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 369,
+          "optimizer": {
+            "matched": 36,
+            "cost": 363
+          },
+          "greedy": {
+            "matched": 36,
+            "cost": 774
+          }
+        },
+        {
+          "seed": 6008,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 356,
+          "optimizer": {
+            "matched": 40,
+            "cost": 469
+          },
+          "greedy": {
+            "matched": 40,
+            "cost": 937
+          }
+        },
+        {
+          "seed": 6009,
+          "drivers": 17,
+          "passengers": 50,
+          "edges": 343,
+          "optimizer": {
+            "matched": 46,
+            "cost": 579
+          },
+          "greedy": {
+            "matched": 46,
+            "cost": 777
+          }
+        }
+      ]
+    }
+  ],
+  "maxBoundTiming": {
+    "drivers": 20,
+    "passengers": 50,
+    "edges": 1000,
+    "matchedCount": 50,
+    "totalCost": 113,
+    "samples": 100,
+    "optimizer": {
+      "medianMs": 1.634,
+      "p95Ms": 1.816
+    },
+    "greedy": {
+      "medianMs": 0.715,
+      "p95Ms": 0.833
+    },
+    "targetP95Ms": 100
+  },
+  "discrepancies": [],
+  "pass": true
+}
