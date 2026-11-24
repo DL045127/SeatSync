@@ -5,7 +5,7 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 ## Start here
 
 1. Read [AGENTS.md](AGENTS.md), then the current handoff below.
-2. Read [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the selected stack, contracts, and acceptance-check definitions. It owns technical decisions; this file owns execution order and status.
+2. For the address extension, start with the [implementation sequence](#address-implementation-sequence) and the [L-series acceptance catalog](docs/ARCHITECTURE-v2.md#delivery-and-acceptance). Read the corresponding sections of the [address architecture](docs/ARCHITECTURE-v2.md) for the slice you are picking up. The [released architecture](docs/ARCHITECTURE.md) owns the existing zone, matching and transaction contracts.
 3. Read [PROJECT_SPEC.md](PROJECT_SPEC.md) for course requirements and [EVIDENCE.md](docs/EVIDENCE.md) for observations and human review. [README.md](README.md) owns verified setup/demo instructions once they exist.
 4. Inspect `git status --short`, `git log -5 --oneline`, and the files before changing anything. Preserve existing work. Check this handoff against the actual checkout; do not assume recorded progress is current.
 5. Resume the first unfinished checkpoint whose prerequisites pass. A later targeted user request takes precedence over this sequence.
@@ -15,12 +15,12 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 | Field | Current value |
 |---|---|
 | Last updated | 2026-11-24 |
-| Implementation baseline | `e2510d7` — finalized architecture contracts; Git already exists |
-| Handoff revision | Full W6 review and clean reproduction on local `8e2dc04`. GitHub’s default branch was `2d4768b` on 2026-11-24. [W6 completion review](docs/EVIDENCE.md#w6-completion-review) |
+| Implementation baseline | `8e2dc04` is the reproduced W6 zone release. [W6 completion review](docs/EVIDENCE.md#w6-completion-review) |
+| Handoff revision | Continue on `main`. The address design landed in `fc8b508`; `2b36a87` records the free-plan decision and Austin pilot. |
 | Completed | W0–W5 technical checkpoints, W6 clean reproduction, all 38 acceptance checks and the draft PDFs. R2 passed. |
 | Runnable state | Fresh clone of `8e2dc04` and empty designated databases. Setup 2/2, matching 69/69, unit 33/33, database 1/1, concurrency 47/47, Chromium 12/12 and demo workflows 3/3. [W6 completion review](docs/EVIDENCE.md#w6-completion-review) |
-| Current checkpoint | W6 technical verification complete. Independent student review and external course actions remain open under R3, which the student deferred on 2026-11-24. |
-| Next bounded task | Implement the checkpoint A fixture workflow and verify reset, key lifecycle and selection-token outcomes under L-01–L-04 (ISSUE-047–049 and ISSUE-052). The [checkpoint rows](#next-product-milestone--searchable-us-pickups) track prerequisites and evidence. The free-plan retention decision is recorded under ISSUE-045. |
+| Current checkpoint | Address A is ready to start. No address implementation episode or L-series execution is recorded. W6 technical verification is complete. The student deferred the remaining R3 course work. |
+| Next bounded task | **A1 — schema upgrade and reset.** Use a disposable W6 database with a saved zone plan and receipts. Add the migration and transactional generation change, then exercise both fresh installation and upgrade over the saved data. See [A1 and its checks](#address-implementation-sequence). |
 | First product priority | [Searchable U.S. pickups](#next-product-milestone--searchable-us-pickups). The W6 course checklist can proceed in parallel. |
 | Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. The default shell still selects Node 26, which crashes on a missing simdjson dylib (ISSUE-002); prepend `$(brew --prefix node@24)/bin` to `PATH` for all project commands. Exact project versions are in `package.json`/`package-lock.json`. |
 | Blockers | ISSUE-004 remains a documented offline-reset limitation. Outstanding student acceptance and course actions block R3, which is deferred and not currently pursued. The live pilot awaits checkpoint C and the free project, key and budget under L-18. |
@@ -211,7 +211,28 @@ The [address-trip architecture](docs/ARCHITECTURE-v2.md) specifies search and co
 | C — Adapter, concurrency and deadlines on loopback | B | L-13–L-17 | Not started | Codex | Pending | Pending |
 | D — Live provider pilot | C, then free project/key and quota check before live queries | L-18–L-19 | Not started | Student (provider rights/account), Codex (technical verification) | Pending | Pending |
 
-Checkpoint A’s owner is the planned implementer. Record the actual contributor with the bounded request at episode start. Continue the address-trip implementation on `main` from the design baseline `fc8b508`.
+### Address implementation sequence
+
+Work in order within each checkpoint. Each row describes a piece that can be handed off independently. The [acceptance catalog](docs/ARCHITECTURE-v2.md#delivery-and-acceptance) specifies the full assertions for each L-ID. Where an ID spans several rows, keep it open until all its assertions have evidence. A–C use fixtures or a loopback provider stub and can proceed without a Geoapify account.
+
+| Work item | Implementation entry points and observable result |
+|---|---|
+| **A1 · Upgrade and reset** | Start in `db/migrations/`, `src/db/setup.ts` and `src/db/dataset.ts`. Add the [v2 schema](docs/ARCHITECTURE-v2.md#4-data-model-and-upgrade) in a new migration, preserving the checksum of `001_foundation.sql`. Install a generation on fresh and upgraded databases, give the app read-only access to it, and replace it in the same transaction as reset. In real PostgreSQL verify the saved zone rows and receipts survive upgrade, and generation and data move together on reset or rollback. Retain the upgraded fixture for the L-02 API checks. (L-01, L-02) |
+| **A2 · Fixture search and signed selections** | Implement the fixture adapter and search route under the [search and token contract](docs/ARCHITECTURE-v2.md#3-search-confirmation-and-http-contracts). Exercise concurrent first-use key creation, restart, purpose/scope/expiry, selection reuse, and zero suggestion writes. Apply the cross-site request check before provider dispatch or keyed work. (L-01, L-03, L-04) |
+| **A3 · Create trips and register people** | Extend `src/contracts/`, `src/trips/service.ts` and the trip routes. Preserve zone fingerprints, check the stored receipt before token verification, and enforce mode and lifetime caps under the trip lock. Verify durable rows and receipts on replay, unavailable keys and each reset outcome, including a lost acknowledgement. Exercise the saved W6 plan and pending zone request through the upgraded API. (L-01, L-02, L-04) |
+| **A4 · Complete one offline trip** | Connect keyboard search and confirmation in the organizer pages to fixture routing and the mode-aware preview, commit and dashboard in `src/trips/`. With outbound provider access blocked, create a trip, register a driver and pickup, preview, save and reload. Verify the displayed units, superseded search results and zone regressions. (L-02, L-03) |
+| **B1 · Verify projection independently** | Drive the real address projector, preview and commit with both hand fixtures. Compare production edges with a test-only calculation from raw directed times on at least 100 fixed seeds. Feed the independent input to `tests/matching/oracle.ts`; compare maximum coverage and cost. Include zero, no-route, threshold and rounding cases. (L-05, L-06, L-10) |
+| **B2 · Reuse and recover** | In the preview and repository paths, distinguish the legs needed now from those retained for an active zero-seat driver. Compare cold and reused results on identical roster IDs. Verify 2→0→2 seats through an outage, fetch counts after additions, pruning, and a fully cold rebuild after corrupt evidence. (L-07–L-11) |
+| **B3 · Validate reads and commits** | Inspect actual SQL and serialized responses for cached previews and dashboards. Exercise commit with corrupt evidence, display of a saved old-policy plan, rejection of a superseded preview, and cold recovery with routing disabled. Verify the prior plan and private evidence independently in PostgreSQL. (L-11, L-12) |
+| **C1 · Exercise the provider adapter** | Drive the planned routing adapter against a counting loopback HTTP stub. Check the pinned request parameters and directed cell mapping. Inject refused, quota-limited, malformed and stalled responses and check the database for partial publication. (L-13) |
+| **C2 · Bound concurrent previews** | Exercise permit ownership and settled-leg handoff in `src/trips/preview.ts`, then the shared deadline across provider I/O, pool acquisition and publication in `src/db/transaction.ts`. Use barriers, separate database clients and a counting stub to verify the winner, stale rejection, timeout cleanup and uncertain-COMMIT retry. (L-14–L-16) |
+| **C3 · Verify the waiting organizer’s UI** | Deliver superseded successes and errors to `src/app/trips/reducer.ts` and the dashboard. Check pending, Retry and Save through the browser. Measure a competing trip under a 20-driver/50-passenger address fixture using the existing responsiveness evaluation as the starting point. (L-17) |
+| **D1 · Qualify the live run** | Check fixture attribution in the UI. Have the owner confirm the free/no-card project, server-side key and available credits for the intended calls. Record the budget and attribution evidence without the key. ISSUE-045 records the retention decision. (L-18) |
+| **D2 · Demonstrate live coverage** | After D1, run the [West Campus apartment scenario](docs/ARCHITECTURE-v2.md#austin-live-demo-west-campus-apartments-to-one-event) and a second U.S. region. Start small, record precision, latency, attribution and actual credits, then disconnect and exercise covered rematch, commit, replay and reload. (L-19) |
+
+**Where to run checks.** Follow the [verified environment and database setup](README.md#setup-and-demonstration). Use `npm run test:setup` and `npm run test:database` for A1, then extend the existing `test:unit`, `test:concurrency` and `test:e2e` suites for A2–A4. B adds `test:matching` and real preview/commit integration cases. C uses the unit, concurrency and browser suites plus the responsiveness evaluation. These commands exist today. Their W6 results establish the zone baseline; an L-ID needs a test or interaction that exercises the new address behavior.
+
+**Resuming mid-checkpoint.** Before coding, read the current handoff, compare its revision and outstanding files with `git status --short --branch`, the staged and unstaged diffs, and the latest episode in [EVIDENCE](docs/EVIDENCE.md). Record the actual contributor, starting revision, work item and bounded request there. At a partial stop, update **Current checkpoint** and **Next bounded task** above with the last completed item, unfinished behavior, relevant files or commit, exact check and observed result, remaining L-IDs or blocker, and the next action. Link the episode so the next agent can resume a failing or partially verified case. Update the checkpoint table when its status changes.
 
 The [design commit review](docs/EVIDENCE.md#address-design-commit-review) checked traceability and documentation. Use the [L-series acceptance catalog](docs/ARCHITECTURE-v2.md#delivery-and-acceptance) and the [checkpoint closeout procedure](#checkpoint-closeout). Record the bounded request before each implementation episode. Populate the revision and evidence fields from actual runs and map each L-ID to its test or interaction and result. Design review is recorded separately from checkpoint execution.
 
@@ -228,7 +249,7 @@ These gates describe readiness; they do not automatically publish, deploy, or su
 
 ## Command contracts and evidence
 
-README lists the existing W0 commands and distinguishes verified commands from pending checks. Later scripts are planned. Add scripts as their associated behavior is implemented and record actual verification in EVIDENCE.
+The table records when each command entered the W0–W6 plan. [README](README.md) has the runnable procedures. For the address extension, use the suite mapping in the [implementation sequence](#address-implementation-sequence) and record observed results in EVIDENCE.
 
 | Introduce by | Planned commands |
 |---|---|
