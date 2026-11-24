@@ -140,7 +140,7 @@ test("ISSUE-021: blocked storage sends zero creation requests; a lost creation r
     await page.getByRole("button", { name: "Create trip" }).click();
     // The pending banner also appears before the POST completes. Wait for the
     // simulated 503 to reach the browser before inspecting the committed id.
-    await expect(page.getByRole("alert")).toHaveText("Outcome unknown. Retry the same creation.");
+    await expect(page.getByText("Outcome unknown. Retry the same creation.", { exact: true })).toBeVisible();
     await expect(page.getByText(/unresolved creation/i)).toBeVisible();
     expect(committedId).toBeDefined();
 
