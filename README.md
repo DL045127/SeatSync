@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**The student accepted W3, and R1 (the internal workflow demo) passed.** W4 covers races and failure recovery. Independent student acceptance of W2 remains pending. [Current handoff](WORKPLAN.md)
+**W5 is committed at `2d4768b`.** The trip workflow, race and recovery checks, and matching, concurrency and responsiveness evaluations passed. W6 reproduced the candidate from a fresh checkout and empty databases. The [38-check results](docs/EVIDENCE.md#validation-results--vr-1-through-vr-3-rr-4) include one additional cross-trip preview check in the W6 diff. Student review and submission tasks remain open. [Current handoff](WORKPLAN.md)
 
 ## Documentation
 
@@ -12,7 +12,7 @@ Carpool coordination for organization events: create a trip, register drivers an
 - [Project evidence](docs/EVIDENCE.md): required validation results, agent/human work records, two decisions, debugging case, and attribution. Fill these during development.
 - [Course specification](PROJECT_SPEC.md): supplied requirements and final acceptance checklist.
 
-The selected design is one Next.js application with PostgreSQL, explicit SQL transactions, and bounded min-cost flow matching. W0 provides the scaffold, database setup, and readiness checks. W1 adds matching. Later checkpoints add the trip workflow, stored previews, versioned commit, and browser recovery.
+The selected design is one Next.js application with PostgreSQL, explicit SQL transactions, and bounded min-cost flow matching. The browser supports trip creation, registration, server-generated previews, version-checked saves and same-key retry after an uncertain outcome.
 
 ## Setup and demonstration
 
@@ -49,9 +49,9 @@ For W3, run the preview/commit integration cases (part of `npm run test:concurre
 
 For W5 evaluation, `npm run eval:matching` runs the exact-size classes and 100 oracle seeds. With the designated `groupride_test` database free, `npm run eval:concurrency` runs D-2. After `npm run build`, `npm run eval:responsiveness` starts the production server on port 3100 and writes `eval/p01-responsiveness.json`. Both database experiments reset `groupride_test`. P-01 verifies the persisted 20-driver/50-passenger roster before timing, ends the measured window the instant the preview load finishes (classifying competing requests by start time against that boundary), requires 100 distinct freshly-computed previews each with a finite matcher duration, and records competing GET/PATCH latency, matcher duration, cache hits and event-loop delay. The `roster`, `duplicate`, `preview`, and `edits` values of `P01_NEGATIVE_CONTROL` each produce a failing run and write `eval/p01-control.json`. Observed on this host (Node 24, commit `8f3187a`): D-1 oracle 100/100, solver p95 ≈ 1.8 ms; D-2 both variants `STALE_VERSION` with the full blocking interval; P-01 roster `20d/50p`, 100 fresh previews, competing under-load p95 ≈ 12 ms, increase ≈ 2 ms.
 
-To open the scaffold against your demo database, run `npm start` after building or use `npm run dev`, then visit `http://127.0.0.1:3000`.
+To open the app against your demo database, run `npm start` after building or use `npm run dev`, then visit `http://127.0.0.1:3000`.
 
-`npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it. `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
+`npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it and wait for reset to finish before restarting. A startup read overlapping reset may briefly report `DATASET_MISMATCH` (ISSUE-004). `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
 
 ## Demonstration (W3 workflow)
 
@@ -77,4 +77,4 @@ Open the same `/trips/<id>` URL in a second browser profile to see the stale-com
 
 The course requires a runnable GitHub repository accessible to staff, a short proposal PDF, a final slide deck PDF, and a live demonstration. Submit the required URL/PDFs and reserve a demo slot through Canvas by its deadlines. The final deck is the writeup; no separate written report is required.
 
-Proposal inputs are covered by the architecture (workflow, validation, dependencies, risks/fallback) and evidence plan (human/agent responsibilities). The required proposal PDF still needs to be prepared and submitted; a separate Markdown draft or duplicate course checklist is not required.
+The [proposal PDF](deliverables/proposal.pdf) and [six-slide presentation draft](deliverables/presentation-draft.pdf) are ready for student review. The deck must be transferred into the official Canvas template. The [W6 checklist](WORKPLAN.md#w6--clean-reproduction-and-submission) tracks the remaining course actions.

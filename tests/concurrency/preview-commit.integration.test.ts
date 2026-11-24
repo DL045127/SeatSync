@@ -193,6 +193,20 @@ describe("C-07 capacity reduction clears the plan", () => {
   });
 });
 
+test("C-12 rejects another trip's preview even when both trips have the same version", async () => {
+  const source = await freshTrip();
+  const target = await freshTrip();
+  const preview = await publishPreview(pool, source);
+  const before = await getTripSnapshot(pool, target);
+  expect(before?.version).toBe(preview.body.baseVersion);
+
+  const result = await commitPreview(pool, target, key(), { previewId: preview.body.previewId });
+
+  expect(result.httpStatus).toBe(404);
+  expect(result.body).toMatchObject({ error: { code: "NOT_FOUND" } });
+  expect(await getTripSnapshot(pool, target)).toEqual(before);
+});
+
 describe("C-14 commit input and preview validation", () => {
   test("a malformed preview ID is rejected as invalid input", async () => {
     const tripId = await freshTrip();
