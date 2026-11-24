@@ -1,6 +1,6 @@
 # Project evidence
 
-**Status:** W6 technical verification passed for release candidate `5d86e5b`, including the C-12 regression and the corrected lost-creation browser case. Submission and outstanding student reviews are pending. Design and planned checks live in [ARCHITECTURE.md](ARCHITECTURE.md).
+**Status:** The W6 suites and measurements reproduced. R2 is under review following a U-02 false positive. [W6 technical review](#w6-technical-review) Submission and outstanding student reviews are pending. Design and planned checks live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The [course specification](../PROJECT_SPEC.md) requires the content below, but does not require separate documents for each category. These are working records for the final slide deck; DEL-3 does not require a separate written report.
 
@@ -46,7 +46,7 @@ The table maps all 38 IDs in the [acceptance contract](ARCHITECTURE.md#7-validat
 | WF-3 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) | Passed. Two tabs saw the same trip. A save in one made the other tab’s stale save request a review and refresh. |
 | WF-4 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) · [persisted totals](../tests/concurrency/preview-commit.integration.test.ts) | Passed. A North driver and East passenger produced one persisted match at cost 7 through the service and the browser. |
 | U-01 | [`npm run test:unit`](../tests/unit/reducer.test.ts) | Passed. Learning version 6 invalidated the version-5 preview. Delayed responses could not lower the version floor. |
-| U-02 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) | Passed. Reload after an uncertain mutation retained the original key and body. Replay resolved the same operation. |
+| U-02 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) | Needs verification. Reload retained the stored key and route. A control that omitted the retry POST passed 3/3. [W6 technical review](#w6-technical-review) |
 | U-03 | [`npm run test:e2e`](../tests/e2e/workflow.spec.ts) | Passed. Unavailable session storage blocked writes before transmission while reading and previewing still worked. |
 | U-04 | [`npm run test:unit`](../tests/unit/reducer.test.ts) | Passed. A matching finalized failure released the pending operation. Unknown outcomes and old-key replies preserved it, and Commit remained disabled while a write or refresh was pending. |
 | P-01 | [`npm run eval:responsiveness`](../scripts/eval-responsiveness.ts) · [W6 run](../eval/w6/p01-responsiveness.json) | Passed. 100 fresh previews on the 20/50 fixture, zero cache hits. The competing client’s p95 was 12 ms (+1.4 ms over idle), with zero errors and timeouts. |
@@ -104,7 +104,7 @@ On the first W6 candidate (`f306937`), 47/47 concurrency cases passed. Chromium 
 
 An intermediate fix (commit `0bcd81c`) reached the expected 503 handler, but its alert selector also matched the Next.js route announcer. The final test waits for the exact recovery message.
 
-**Technical outcome.** Candidate `5d86e5b` includes the C-12 cross-trip regression and ISSUE-039 test fix. A separate clean clone used only the tracked env example, Node 24.22.3, the lockfile, the host npm/Chromium caches and a new isolated PostgreSQL volume. The demo database was migrated twice and the test database once. Both began empty. All 38 architecture IDs have one row in the acceptance table and passed on this candidate.
+**Technical outcome.** Candidate `5d86e5b` includes the C-12 cross-trip regression and ISSUE-039 test fix. A separate clean clone used only the tracked env example, Node 24.22.3, the lockfile, the host npm/Chromium caches and a new isolated PostgreSQL volume. The demo database was migrated twice and the test database once. Both began empty. All 38 architecture IDs have a row in the acceptance table. The original suites passed. The subsequent review below qualifies the U-02 result.
 
 | Check | Observed on `5d86e5b` |
 |---|---|
@@ -115,7 +115,21 @@ An intermediate fix (commit `0bcd81c`) reached the expected 503 handler, but its
 | D-1 and D-2 | The solver matched the oracle on 100/100 seeds with zero discrepancies and a maximum-bound p95 of 1.936 ms. The long-lock run recorded a 28 ms blocking interval. Both stale-version checks passed. [Matching artifact](../eval/w6/d1-matching.json) · [Lock artifact](../eval/w6/d2-concurrency.json) |
 | P-01 | The 20-driver, 50-passenger run served 100 distinct uncached previews. Competing p95 was 12 ms and the change from idle was +1.4 ms, with zero errors or timeouts. [Responsiveness artifact](../eval/w6/p01-responsiveness.json) |
 
-The technical release gate R2 passed. Student inspection, attribution confirmation, final template and submissions remain open under R3. The demo and isolated database service were stopped after verification.
+The initial verification marked R2 passed. The subsequent review reopened it for U-02. Student inspection, attribution confirmation, final template and submissions remain open under R3. The demo and isolated database service were stopped after verification.
+
+### W6 technical review
+
+Reviewed `2d4768b..5c3525c` from a fresh clone at `5c3525c` with Node 24.22.3, cached lockfile dependencies and Chromium, and a new PostgreSQL volume. Setup 2/2, matching 69/69, unit 33/33, database 1/1, concurrency 47/47 and Chromium 12/12 passed. The corrected lost-create case passed 10/10 repeats. Lint, typecheck, build and readiness passed. All three demo browser scenarios passed on port 3000 using the prior rehearsal’s temporary Playwright config. The isolated database service was stopped.
+
+- **ISSUE-040 · U-02.** In the review clone, the passenger Retry handler was changed to clear the pending key, report success and refresh without transmitting a mutation. The existing [U-02 test](../tests/e2e/workflow.spec.ts) passed 3/3 repeats, and a database read found all three originally submitted passengers. The visible row and cleared banner therefore cannot establish receipt replay. A separate control that changed the retry name received 409 and failed the test. To close the finding, explicitly forward and confirm the first write, hide its success, reload, observe both keyed requests and compare their bodies. Verify the stored outcome, version and participant state after retry, including a cancellation between attempts. The skipped-POST control must fail.
+- **ISSUE-041 · D-1 evidence.** The review run agreed with the oracle on 100/100 seeds, with zero discrepancies and maximum-bound solver p95 of 1.84 ms. The [candidate artifact](../eval/w6/d1-matching.json) retains four aggregate oracle counts. Individual inputs, objectives, feasibility and timing for the tiny seeds cannot be inspected in that run. Size-class entries include objectives and sizes, while runtime is summarized only for the separate maximum-bound batch. Retain the observations specified in [D-1](ARCHITECTURE.md#d-1-exact-matching-versus-greedy) when regenerating the artifact. D-2 passed both variants. P-01 served 100 distinct fresh previews with 100 finite matcher durations and competing p95 of 12.4 ms (+1.9 ms over idle).
+- **ISSUE-042 · Clean-checkout instructions.** Before dependency installation, the first README command block passed setup 2/2 and then failed with `vitest: command not found`. Matching passed 69/69 after `npm ci`. The standard [browser config](../playwright.config.ts) starts port 3100 and resets the test database. Reproducing the separately reported automated demo check on port 3000 used an untracked config without the test reset. Put installation before matching and retain the demo browser invocation or its equivalent in the repository. The manual README demo works.
+
+The acceptance map contains 38 distinct IDs. The proposal has one page and the draft deck has six. A marker scan of the 151 blobs reachable from `5c3525c`, including extracted text from both PDFs, matched only AGENTS, PROJECT_SPEC, WORKPLAN and EVIDENCE. Student provenance confirmation, the official template and submission tasks remain open.
+
+### W6 review corrections
+
+Bounded request: address ISSUE-040–042. Verify receipt replay across reload and cancellation with a skipped-POST control, retain case-level D-1 measurements, and reproduce the documented installation and demo commands in a fresh checkout. Student review is pending.
 
 ## W0 setup verification
 

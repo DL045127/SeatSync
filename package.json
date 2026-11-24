@@ -22,6 +22,7 @@
     "test:concurrency": "vitest run --config vitest.concurrency.config.ts",
     "test:readiness": "node --import tsx scripts/check-readiness.ts",
     "test:e2e": "playwright test",
+    "test:demo": "playwright test --config playwright.demo.config.ts",
     "eval:matching": "node --import tsx scripts/eval-matching.ts",
     "eval:concurrency": "node --import tsx scripts/eval-concurrency.ts",
     "eval:responsiveness": "node --import tsx scripts/eval-responsiveness.ts"

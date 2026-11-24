@@ -380,46 +380,62 @@ test("WF-3: two sessions, stale commit gives a review/refresh flow without silen
   }
 });
 
-test("U-02: same-tab reload after an uncertain mutation retains the exact pending key/body", async ({ page }) => {
+test("U-02: reload replays the exact registration receipt after a withdrawal", async ({ page }) => {
   const tripId = await createTrip(page, "Pending Reload Trip");
-  await addDriver(page, "Casey", "north", 1);
+  const trip = `/api/trips/${tripId}`;
+  const route = `${trip}/requests`;
+  const passenger = { name: "Lee", zoneId: "north" };
+  const pendingSlot = () => page.evaluate(() => sessionStorage.getItem("groupride.pending.v1"));
+  let originalReceipt!: { id: string; mutationVersion: number; operation: { key: string; outcome: string } };
 
-  // Make the next mutation hang so it never resolves, leaving a pending op that
-  // was persisted to sessionStorage before transmission. Submit inline (not via
-  // the settling helper, which would wait for a completion that never comes).
-  await page.route("**/api/trips/*/requests", () => {
-    // Never fulfill: the request stays in flight.
+  // Commit the first POST and replace its reply before the page sees it.
+  await page.route(route, async (intercept) => {
+    const committed = await intercept.fetch();
+    expect(committed.status()).toBe(201);
+    expect(committed.headers()["idempotency-replayed"]).toBeUndefined();
+    originalReceipt = await committed.json();
+    await intercept.fulfill({ status: 503, json: { error: { code: "DATABASE_UNAVAILABLE" } } });
+  }, { times: 1 });
+  await page.getByLabel("passenger name").fill(passenger.name);
+  await page.getByLabel("passenger zone").selectOption(passenger.zoneId);
+  const [first] = await Promise.all([
+    page.waitForRequest(route),
+    page.getByTestId("passenger-form").getByRole("button", { name: "Add passenger" }).click(),
+  ]);
+  await expect(page.getByText("Outcome unknown. Retry the same operation.", { exact: true })).toBeVisible();
+  const key = first.headers()["idempotency-key"];
+  expect(first.method()).toBe("POST");
+  expect(first.postDataJSON()).toEqual(passenger);
+  expect(originalReceipt).toMatchObject({ id: expect.any(String), mutationVersion: 1, operation: { key, outcome: "applied" } });
+  const stored = await pendingSlot();
+  expect(JSON.parse(stored!)).toEqual({ key, tripId, method: "POST", canonicalRoute: route, normalizedBody: passenger });
+
+  // A separate client withdraws the committed passenger while the tab is uncertain.
+  const withdrawal = await page.request.patch(`${route}/${originalReceipt.id}`, {
+    headers: { "idempotency-key": crypto.randomUUID() },
+    data: { baseVersion: originalReceipt.mutationVersion, active: false },
   });
-  await page.getByLabel("passenger name").fill("Lee");
-  await page.getByLabel("passenger zone").selectOption("north");
-  await page.getByTestId("passenger-form").getByRole("button", { name: "Add passenger" }).click();
-  // The pending-operation banner appears (operation recorded, unresolved).
-  await expect(page.getByText(/Pending operation/)).toBeVisible();
+  expect(withdrawal.status()).toBe(200);
+  const withdrawn = await (await page.request.get(trip)).json();
+  expect(withdrawn).toMatchObject({ version: 2, requests: [{ ...passenger, id: originalReceipt.id, active: false }] });
 
-  const storedBefore = await page.evaluate(() => sessionStorage.getItem("groupride.pending.v1"));
-  expect(storedBefore).not.toBeNull();
-  const parsed = JSON.parse(storedBefore as string) as { key: string; canonicalRoute: string };
-
-  // Reload: the exact pending operation (same key and route) is restored.
-  await page.unroute("**/api/trips/*/requests");
   await page.reload();
   await expect(page.getByText(/Pending operation/)).toBeVisible();
-  const storedAfter = await page.evaluate(() => sessionStorage.getItem("groupride.pending.v1"));
-  const parsedAfter = JSON.parse(storedAfter as string) as { key: string; canonicalRoute: string };
-  expect(parsedAfter.key).toBe(parsed.key);
-  expect(parsedAfter.canonicalRoute).toBe(parsed.canonicalRoute);
-
-  // Click Retry: the original key/body replays and resolves to exactly one
-  // database effect (one passenger added, not two).
-  await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText(/Lee \(north\)/)).toBeVisible();
+  expect(await pendingSlot()).toBe(stored);
+  const [replay] = await Promise.all([
+    page.waitForResponse(route, { timeout: 5000 }),
+    page.getByRole("button", { name: "Retry" }).click(),
+  ]);
+  expect(replay.request().method()).toBe("POST");
+  expect(replay.request().headers()["idempotency-key"]).toBe(key);
+  expect(replay.request().postData()).toBe(first.postData());
+  expect(replay.status()).toBe(201);
+  expect(replay.headers()["idempotency-replayed"]).toBe("true");
+  expect(await replay.json()).toEqual(originalReceipt);
   await expect(page.getByText(/Pending operation/)).toHaveCount(0);
-  const passengerCount = await page
-    .locator("section", { has: page.getByRole("heading", { name: "Passengers" }) })
-    .getByRole("listitem")
-    .count();
-  expect(passengerCount).toBe(1);
-  void tripId;
+  expect(await pendingSlot()).toBeNull();
+  await expect(page.getByText("Lee (north) — withdrawn")).toBeVisible();
+  expect(await (await page.request.get(trip)).json()).toEqual(withdrawn);
 });
 
 test("ISSUE-022: only a receipt-backed matching-key terminal response resolves a pending op", async ({ page }) => {

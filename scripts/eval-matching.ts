@@ -19,6 +19,7 @@
 
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { cpus, release } from "node:os";
 import { performance } from "node:perf_hooks";
 import {
   type MatchInput,
@@ -57,47 +58,31 @@ function gitCommit(): string {
   }
 }
 
-/**
- * Feasibility + objective invariants that must hold for ANY plan the optimizer
- * or greedy returns: the plan validates against its input, its reported counts
- * agree with its assignments, and the optimizer never does worse than greedy at
- * the same cardinality (and is never beaten by it).
- */
-function invariantCheck(input: MatchInput, label: string): void {
-  const flow = minCostFlowMatch(input);
-  const greedy = greedyMatch(input);
-  // Both plans must be feasible against the input.
+function measurePlan(input: MatchInput, solve: typeof greedyMatch, label: string) {
+  const start = performance.now();
+  const plan = solve(input);
+  const runtimeMs = performance.now() - start;
+  let feasible = true;
   try {
-    assertFeasible(input, flow);
-  } catch (e) {
-    check(false, label, `optimizer plan infeasible: ${(e as Error).message}`);
+    assertFeasible(input, plan);
+  } catch (error) {
+    feasible = false;
+    check(false, label, `infeasible plan: ${(error as Error).message}`);
   }
-  try {
-    assertFeasible(input, greedy);
-  } catch (e) {
-    check(false, label, `greedy plan infeasible: ${(e as Error).message}`);
+  check(plan.matchedCount === plan.assignments.length, label, "matchedCount != assignments");
+  const sum = plan.assignments.reduce((total, assignment) => total + assignment.cost, 0);
+  check(plan.totalCost === sum, label, "totalCost != sum(costs)");
+  return { matched: plan.matchedCount, cost: plan.totalCost, feasible, runtimeMs };
+}
+
+function measureCase(input: MatchInput, label: string) {
+  const optimizer = measurePlan(input, minCostFlowMatch, `${label}/optimizer`);
+  const greedy = measurePlan(input, greedyMatch, `${label}/greedy`);
+  check(optimizer.matched >= greedy.matched, label, "greedy seated more passengers");
+  if (optimizer.matched === greedy.matched) {
+    check(optimizer.cost <= greedy.cost, label, "greedy was cheaper at equal coverage");
   }
-  // Internal consistency: matchedCount equals assignment count, totalCost is
-  // the summed assignment cost.
-  for (const [name, r] of [["optimizer", flow], ["greedy", greedy]] as const) {
-    check(r.matchedCount === r.assignments.length, label, `${name} matchedCount != assignments`);
-    const summed = r.assignments.reduce((s, a) => s + a.cost, 0);
-    check(r.totalCost === summed, label, `${name} totalCost != sum(costs)`);
-  }
-  // The optimizer maximizes coverage first: it must match at least as many as
-  // greedy, and when they tie on coverage it must not cost more.
-  check(
-    flow.matchedCount >= greedy.matchedCount,
-    label,
-    `optimizer matched ${flow.matchedCount} < greedy ${greedy.matchedCount}`,
-  );
-  if (flow.matchedCount === greedy.matchedCount) {
-    check(
-      flow.totalCost <= greedy.totalCost,
-      label,
-      `at equal cardinality optimizer cost ${flow.totalCost} > greedy ${greedy.totalCost}`,
-    );
-  }
+  return { drivers: input.drivers.length, passengers: input.passengers.length, edges: input.edges.length, optimizer, greedy };
 }
 
 function runFixtures(): Array<Record<string, unknown>> {
@@ -105,17 +90,14 @@ function runFixtures(): Array<Record<string, unknown>> {
   for (const id of ["M-01", "M-08"] as const) {
     const fx = fixtures[id];
     const input = fromMatrix(fx);
-    const flow = minCostFlowMatch(input);
-    const greedy = greedyMatch(input);
-    check(flow.matchedCount === fx.optimal.matched, id, `optimizer matched ${flow.matchedCount} != ${fx.optimal.matched}`);
-    check(flow.totalCost === fx.optimal.cost, id, `optimizer cost ${flow.totalCost} != ${fx.optimal.cost}`);
-    check(greedy.matchedCount === fx.greedy.matched, id, `greedy matched ${greedy.matchedCount} != ${fx.greedy.matched}`);
-    check(greedy.totalCost === fx.greedy.cost, id, `greedy cost ${greedy.totalCost} != ${fx.greedy.cost}`);
-    invariantCheck(input, id);
+    const measured = measureCase(input, id);
+    for (const [plan, expected] of [[measured.optimizer, fx.optimal], [measured.greedy, fx.greedy]]) {
+      check(plan.matched === expected.matched && plan.cost === expected.cost, id,
+        `expected ${expected.matched}/${expected.cost}, got ${plan.matched}/${plan.cost}`);
+    }
     out.push({
       id,
-      optimizer: { matched: flow.matchedCount, cost: flow.totalCost },
-      greedy: { matched: greedy.matchedCount, cost: greedy.totalCost },
+      ...measured,
       expectedOptimal: fx.optimal,
       expectedGreedy: fx.greedy,
     });
@@ -127,24 +109,25 @@ function runOracleSeeds(): Record<string, unknown> {
   // Within the oracle bound (<=4 drivers, <=7 passengers). The optimizer MUST
   // equal the oracle objective on every seed; greedy is compared for coverage.
   const seeds = 100;
+  const perSeed = [];
   let optimizerAgrees = 0;
   let greedySameCoverage = 0;
   let greedyWorseCost = 0;
   for (let s = 0; s < seeds; s++) {
     const input = randomCase(s, { maxDrivers: 4, maxPassengers: 7, maxSeats: 3, maxCost: 10, compatibility: 0.6 });
     const oracle = oracleObjective(input);
-    const flow = minCostFlowMatch(input);
-    const greedy = greedyMatch(input);
-    invariantCheck(input, `oracle-seed-${s}`);
-    const agrees = flow.matchedCount === oracle.matchedCount && flow.totalCost === oracle.totalCost;
+    const measured = measureCase(input, `oracle-seed-${s}`);
+    const { optimizer: flow, greedy } = measured;
+    perSeed.push({ seed: s, input, oracle, ...measured });
+    const agrees = flow.matched === oracle.matchedCount && flow.cost === oracle.totalCost;
     if (agrees) optimizerAgrees += 1;
-    else check(false, `oracle-seed-${s}`, `optimizer (${flow.matchedCount}/${flow.totalCost}) != oracle (${oracle.matchedCount}/${oracle.totalCost})`);
-    if (greedy.matchedCount === flow.matchedCount) {
+    else check(false, `oracle-seed-${s}`, `optimizer (${flow.matched}/${flow.cost}) != oracle (${oracle.matchedCount}/${oracle.totalCost})`);
+    if (greedy.matched === flow.matched) {
       greedySameCoverage += 1;
-      if (greedy.totalCost > flow.totalCost) greedyWorseCost += 1;
+      if (greedy.cost > flow.cost) greedyWorseCost += 1;
     }
   }
-  return { seeds, optimizerAgrees, greedySameCoverage, greedyWorseCost };
+  return { seeds, optimizerAgrees, greedySameCoverage, greedyWorseCost, perSeed };
 }
 
 /** Deterministic 32-bit PRNG (mulberry32), local so size classes are reproducible. */
@@ -201,25 +184,17 @@ function sizeClasses(): Array<Record<string, unknown>> {
       // Guard the exact sizes we claim.
       check(input.passengers.length === passengers, `size-${passengers}-seed-${k}`, `passengers ${input.passengers.length} != ${passengers}`);
       check(input.drivers.length === drivers, `size-${passengers}-seed-${k}`, `drivers ${input.drivers.length} != ${drivers}`);
-      invariantCheck(input, `size-${passengers}-seed-${k}`);
-      const flow = minCostFlowMatch(input);
-      const greedy = greedyMatch(input);
-      flowMatchedTotal += flow.matchedCount;
-      greedyMatchedTotal += greedy.matchedCount;
-      const equal = flow.matchedCount === greedy.matchedCount;
+      const measured = measureCase(input, `size-${passengers}-seed-${k}`);
+      const { optimizer: flow, greedy } = measured;
+      flowMatchedTotal += flow.matched;
+      greedyMatchedTotal += greedy.matched;
+      const equal = flow.matched === greedy.matched;
       if (equal) {
         equalCardinality += 1;
-        if (greedy.totalCost > flow.totalCost) greedyCostlierAtEqual += 1;
-        costGapAtEqual += greedy.totalCost - flow.totalCost;
+        if (greedy.cost > flow.cost) greedyCostlierAtEqual += 1;
+        costGapAtEqual += greedy.cost - flow.cost;
       }
-      seedResults.push({
-        seed,
-        drivers: input.drivers.length,
-        passengers: input.passengers.length,
-        edges: input.edges.length,
-        optimizer: { matched: flow.matchedCount, cost: flow.totalCost },
-        greedy: { matched: greedy.matchedCount, cost: greedy.totalCost },
-      });
+      seedResults.push({ seed, ...measured });
     }
     out.push({
       passengerClass: passengers,
@@ -291,6 +266,8 @@ function main(): void {
   const artifact = {
     experiment: "D-1 exact matching versus greedy",
     algorithm: ALGORITHM_VERSION,
+    comparison: "src/matching/greedy.ts#greedyMatch",
+    machine: { cpu: cpus()[0]?.model, osRelease: release() },
     node: process.version,
     platform: `${process.platform} ${process.arch}`,
     commit: gitCommit(),

@@ -2,7 +2,7 @@
 
 Carpool coordination for organization events: create a trip, register drivers and passengers, preview assignments, commit them, and recover when availability changes.
 
-**Technical release candidate `5d86e5b` passed W6 clean-checkout verification.** The production build, browser workflow, concurrency tests and evaluations passed on fresh demo/test databases. All 38 acceptance checks are accounted for. Student review and course submissions remain open. [Verification results](docs/EVIDENCE.md#w6-release-candidate-verification) · [Current handoff](WORKPLAN.md)
+**The W6 release candidate builds and runs from a clean checkout.** The production build, browser workflow, concurrency tests and evaluations passed on fresh demo/test databases. The acceptance map lists all 38 checks. U-02 needs stronger browser replay evidence before technical signoff. Student review and course submissions remain open. [Review results](docs/EVIDENCE.md#w6-technical-review) · [Current handoff](WORKPLAN.md)
 
 ## Documentation
 
@@ -18,18 +18,18 @@ The selected design is one Next.js application with PostgreSQL, explicit SQL tra
 
 Use Node `24.22.3` (see `.node-version`), npm, and a running Docker engine with Compose. On a Mac with Homebrew `node@24`, select it for the current shell with `export PATH="$(brew --prefix node@24)/bin:$PATH"`. Copy `.env.example` to `.env` if the file does not exist. The checked-in credentials are for disposable local demo and test databases on port 55432.
 
-Verified in the workspace with Node 24:
+From a fresh checkout, install the locked dependencies before running the setup and matching checks:
 
 ```sh
+npm ci
 npm run test:setup
 npm run test:matching
 docker compose config --quiet
 ```
 
-Run the full W0 setup sequence in a shell with npm registry and Docker access. Use the existing `package-lock.json` for `npm ci` and retain it in Git.
+Continue in the same checkout with Docker running and the designated demo and test databases free:
 
 ```sh
-npm ci
 docker compose up -d --wait db
 npm run db:migrate
 npm run db:migrate
@@ -70,6 +70,8 @@ npm run demo
 4. Click **Save plan (commit)**. The status line shows `assigned`, `Matched: 1`, `Total cost: 7`.
 5. Reload the page: the saved plan persists.
 6. Click **Reduce capacity** or **Cancel** on the driver: the plan clears and the status becomes `needs_rematch`. Preview and save again to rematch.
+
+To rehearse the three automated workflow scenarios against this running demo, run `npm run test:demo` in a second terminal. Chromium creates trips in the local demo database on port 3000 and exercises save/reload, rematch, and stale save. Stop the demo server when finished.
 
 Open the same `/trips/<id>` URL in a second browser profile to see the stale-commit flow: if one tab commits, the other tab's commit is rejected with a review/refresh prompt rather than silently overwriting the saved plan.
 
