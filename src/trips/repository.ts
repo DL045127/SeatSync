@@ -17,6 +17,7 @@ export type LocationMode = "zone" | "address";
 
 export interface TripRow {
   id: string;
+  invite_id: string;
   name: string;
   destination_label: string;
   depart_at: string;
@@ -53,7 +54,7 @@ export interface RequestRow {
   location: unknown;
 }
 
-const TRIP_COLUMNS = `id, name, destination_label, depart_at, status, version,
+const TRIP_COLUMNS = `id, invite_id, name, destination_label, depart_at, status, version,
             plan_version, committed_preview_id, algorithm_version, committed_at,
             location_mode, venue_location`;
 const DRIVER_COLUMNS = `id, trip_id, zone_id, name, seat_capacity, active,
@@ -64,9 +65,10 @@ const REQUEST_COLUMNS = "id, trip_id, zone_id, name, active, location_mode, loca
 export async function lockTrip(
   client: PoolClient,
   tripId: string,
+  byInvite = false,
 ): Promise<TripRow | undefined> {
   const result = await client.query<TripRow>(
-    `SELECT ${TRIP_COLUMNS} FROM trips WHERE id = $1 FOR UPDATE`,
+    `SELECT ${TRIP_COLUMNS} FROM trips WHERE ${byInvite ? "invite_id" : "id"} = $1 FOR UPDATE`,
     [tripId],
   );
   return result.rows[0];
@@ -76,9 +78,10 @@ export async function lockTrip(
 export async function readTrip(
   client: PoolClient,
   tripId: string,
+  byInvite = false,
 ): Promise<TripRow | undefined> {
   const result = await client.query<TripRow>(
-    `SELECT ${TRIP_COLUMNS} FROM trips WHERE id = $1`,
+    `SELECT ${TRIP_COLUMNS} FROM trips WHERE ${byInvite ? "invite_id" : "id"} = $1`,
     [tripId],
   );
   return result.rows[0];
@@ -209,6 +212,43 @@ export async function updateDriverCapacity(
   );
 }
 
+type ParticipantDetailsUpdate = { name: string; zoneId?: string; location?: unknown };
+
+export async function updateDriverDetails(
+  client: PoolClient,
+  tripId: string,
+  driverId: string,
+  update: ParticipantDetailsUpdate & { seatCapacity: number; maxDetourMinutes?: number },
+): Promise<boolean> {
+  const result = await client.query(
+    `UPDATE drivers
+        SET name = $3, zone_id = COALESCE($4, zone_id), location = COALESCE($5::jsonb, location),
+            seat_capacity = $6, max_detour_minutes = COALESCE($7, max_detour_minutes)
+      WHERE trip_id = $1 AND id = $2
+        AND (name, zone_id, location, seat_capacity, max_detour_minutes) IS DISTINCT FROM
+            ($3, COALESCE($4, zone_id), COALESCE($5::jsonb, location), $6, COALESCE($7, max_detour_minutes))`,
+    [tripId, driverId, update.name, update.zoneId, JSON.stringify(update.location), update.seatCapacity, update.maxDetourMinutes],
+  );
+  return result.rowCount === 1;
+}
+
+export async function updateRequestDetails(
+  client: PoolClient,
+  tripId: string,
+  requestId: string,
+  update: ParticipantDetailsUpdate,
+): Promise<boolean> {
+  const result = await client.query(
+    `UPDATE ride_requests
+        SET name = $3, zone_id = COALESCE($4, zone_id), location = COALESCE($5::jsonb, location)
+      WHERE trip_id = $1 AND id = $2
+        AND (name, zone_id, location) IS DISTINCT FROM
+            ($3, COALESCE($4, zone_id), COALESCE($5::jsonb, location))`,
+    [tripId, requestId, update.name, update.zoneId, JSON.stringify(update.location)],
+  );
+  return result.rowCount === 1;
+}
+
 export async function cancelDriver(
   client: PoolClient,
   tripId: string,
@@ -244,8 +284,8 @@ export async function bumpVersionOpen(
 }
 
 /**
- * Apply whole-plan invalidation for an effective roster change on an assigned or
- * needs_rematch trip: delete all assignments, clear plan metadata, bump version,
+ * Apply whole-plan invalidation after a roster change or an explicit clear:
+ * delete all assignments, clear plan metadata, bump version,
  * and set needs_rematch. Returns the new version.
  */
 export async function invalidatePlanAndBump(

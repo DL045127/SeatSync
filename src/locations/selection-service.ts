@@ -45,6 +45,11 @@ import {
 
 export const SEARCH_LIMITS = { queryCodePoints: 100, minQueryCodePoints: 2, results: 5 } as const;
 
+const inviteSearchSchema = z.object({
+  query: z.string(),
+  purpose: z.enum(["driver_start", "pickup"]),
+}).strict();
+
 const searchSchema = z
   .object({
     query: z.string(),
@@ -223,10 +228,12 @@ export async function searchLocations(
   rawBody: unknown,
   deps: SelectionDeps = defaultSelectionDeps(),
   budget: AbortSignal | RequestDeadline = searchDeadline(),
+  inviteId?: string,
 ): Promise<SearchResponse> {
   const deadline = budget instanceof RequestDeadline ? budget : searchDeadline(budget);
   deadline.remaining();
-  const request = normalizeSearch(rawBody);
+  const request = normalizeSearch(inviteId === undefined ? rawBody
+    : { ...inviteSearchSchema.parse(rawBody), tripId: inviteId });
   const provider = requireProvider(deps);
 
   // One short READ ONLY snapshot captures the generation and the trip scope. It touches only
@@ -241,7 +248,8 @@ export async function searchLocations(
       const generation = await readGeneration(client);
       if (request.tripId === null) return { generation, bias: undefined };
       const trip = (await client.query<{ location_mode: string; venue_location: unknown }>(
-        "SELECT location_mode, venue_location FROM trips WHERE id = $1", [request.tripId],
+        `SELECT location_mode, venue_location FROM trips WHERE ${inviteId === undefined ? "id" : "invite_id"} = $1`,
+        [request.tripId],
       )).rows[0];
       if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
       if (trip.location_mode !== "address") {

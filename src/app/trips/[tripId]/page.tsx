@@ -68,6 +68,10 @@ interface LocationView {
 
 interface Snapshot {
   id: string;
+  inviteId: string;
+  name: string;
+  destinationLabel: string;
+  departAt: string;
   version: number;
   status: "open" | "assigned" | "needs_rematch";
   locationMode: "zone" | "address";
@@ -95,6 +99,19 @@ interface Snapshot {
   [key: string]: unknown;
 }
 
+type Driver = Snapshot["drivers"][number];
+type Passenger = Snapshot["requests"][number];
+
+const tripStatusLabels: Record<Snapshot["status"], string> = {
+  open: "Open for registration",
+  assigned: "Plan saved",
+  needs_rematch: "Needs a new plan",
+};
+
+const departureFormat = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium", timeStyle: "short", timeZone: "UTC",
+});
+
 function EstimateDetails({ estimate, snapshot, saved = false }: { estimate: Estimate; snapshot: Snapshot; saved?: boolean }) {
   const locations = [snapshot.venue, ...snapshot.drivers.filter(d => d.active).map(d => d.location),
     ...snapshot.requests.filter(r => r.active).map(r => r.location)];
@@ -104,6 +121,82 @@ function EstimateDetails({ estimate, snapshot, saved = false }: { estimate: Esti
     {estimate.observedFrom ? `Observed ${estimate.observedFrom}. ` : "No provider observations. "}
     <Attribution provider={estimate.provider} sources={locations.flatMap(l => l ? [l.attribution] : [])} />
   </p>;
+}
+
+function InviteLink({ inviteId }: { inviteId: string }) {
+  const path = `/join/${inviteId}`;
+  const [shareUrl, setShareUrl] = useState("");
+  const [copied, setCopied] = useState(false);
+  return (
+    <section className="card invite-panel" aria-labelledby="invite-heading">
+      <div>
+        <h2 id="invite-heading">Invite people</h2>
+        <p>Share this link so people can join as a driver or passenger.</p>
+      </div>
+      <div className="row-actions">
+        <a href={path} className="invite-open">Open invite</a>
+        <button type="button" className="primary" onClick={async () => {
+          const url = new URL(path, window.location.origin).href;
+          setShareUrl(url);
+          setCopied(false);
+          try {
+            await navigator.clipboard.writeText(url);
+            setCopied(true);
+          } catch {
+            // The field below also supports copying on insecure local networks.
+          }
+        }}>Copy invite link</button>
+      </div>
+      {shareUrl && (
+        <label className="invite-url">
+          {copied ? "Invite link copied" : "Select and copy this invite link"}
+          <input value={shareUrl} readOnly onFocus={event => event.target.select()} />
+        </label>
+      )}
+    </section>
+  );
+}
+
+function PlanCards({ assignments, drivers, passengers, unit, saved = false }: {
+  assignments: Assignment[];
+  drivers: Driver[];
+  passengers: Passenger[];
+  unit: CostUnit;
+  saved?: boolean;
+}) {
+  const byDriver = new Map<string, Assignment[]>();
+  for (const assignment of assignments) {
+    const group = byDriver.get(assignment.driverId);
+    if (group) group.push(assignment);
+    else byDriver.set(assignment.driverId, [assignment]);
+  }
+  const names = new Map(passengers.map(passenger => [passenger.id, passenger.name]));
+  return (
+    <div className="plan-grid" data-testid={saved ? "saved-assignments" : "preview-assignments"}>
+      {drivers.length === 0 && <p className="empty-state">No active drivers.</p>}
+      {drivers.map(driver => {
+        const riders = byDriver.get(driver.id) ?? [];
+        return (
+          <article key={driver.id} className="driver-plan" aria-label={driver.name}>
+            <header>
+              <h3>{driver.name}</h3>
+              <p>{riders.length} of {driver.seatCapacity} seats filled</p>
+            </header>
+            {riders.length ? (
+              <ul>
+                {riders.map(({ passengerId, cost }) => (
+                  <li key={passengerId}>
+                    <span>{names.get(passengerId) ?? passengerId}</span>
+                    <span className="pickup-cost">{formatCost(unit, cost)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="empty-state">No passengers assigned.</p>}
+          </article>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function TripPage({ params }: { params: Promise<{ tripId: string }> }) {
@@ -119,36 +212,30 @@ function TripDashboard({ tripId }: { tripId: string }) {
   const [state, dispatch] = useReducer(tripReducer, tripId, initialState);
   const [message, setMessage] = useState<string | null>(null);
   const [readError, setReadError] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; baseVersion: number } | null>(null);
   const snapshot = state.snapshot as Snapshot | null;
   // The reducer holds the full accepted preview payload, so the rendered detail
   // and the committable reference are the same object (ISSUE-023). When the
   // reducer clears/rejects a preview, there is nothing to render.
   const previewDetail = state.preview as PreviewPayload | null;
 
-  // Keep a ref in sync with the read generation AFTER render (not during), so a
-  // fetch completion can tag itself with the generation it was started under.
-  const readGenRef = useRef(state.readGeneration);
-  useEffect(() => {
-    readGenRef.current = state.readGeneration;
-  }, [state.readGeneration]);
+  // Allocate once per read, alongside the reducer's get/start. A render or
+  // effect replay can still see an older reducer value while starts are queued.
+  const readGenRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const generation = ++readGenRef.current;
     dispatch({ type: "get/start" });
-    const generation = readGenRef.current + 1; // matches the bump in get/start
-    readGenRef.current = generation;
     try {
       const res = await fetch(`/api/trips/${tripId}`, { cache: "no-store" });
-      if (!res.ok) {
-        setReadError(true);
-        return;
-      }
+      if (!res.ok) throw new Error("Trip read failed.");
       const body = (await res.json()) as Snapshot;
-      setReadError(false);
+      if (generation === readGenRef.current) setReadError(false);
       dispatch({ type: "get/received", generation, snapshot: body });
     } catch {
       // ISSUE-023: a failed read must be visible and offer retry, not loop on
       // the loading message.
-      setReadError(true);
+      if (generation === readGenRef.current) setReadError(true);
     }
   }, [tripId]);
 
@@ -167,8 +254,9 @@ function TripDashboard({ tripId }: { tripId: string }) {
   // now-hidden one, so the page never strands on stale/empty data.
   useEffect(() => {
     if (
+      state.highestObservedVersion > 0 &&
       !state.pendingOperation &&
-      (state.snapshot === null || state.snapshot.version < state.highestObservedVersion)
+      state.snapshot === null
     ) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void refresh();
@@ -177,10 +265,10 @@ function TripDashboard({ tripId }: { tripId: string }) {
 
   async function sendMutation(
     op: Omit<PendingOperation, "key" | "tripId"> & { key?: string },
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (storageBlocked) {
       setMessage("Session storage is unavailable; mutations are blocked. Reads and previews still work.");
-      return;
+      return false;
     }
     const key = op.key ?? crypto.randomUUID();
     const pending: PendingOperation = {
@@ -204,7 +292,7 @@ function TripDashboard({ tripId }: { tripId: string }) {
             : "Another operation is unresolved in this tab. Resolve it before starting another.",
         );
       }
-      return;
+      return false;
     }
     dispatch({ type: "mutation/start", operation: pending });
 
@@ -236,6 +324,7 @@ function TripDashboard({ tripId }: { tripId: string }) {
           setMessage(body.error?.code ? `Rejected: ${body.error.code}` : "Operation rejected.");
         }
         await refresh();
+        return res.ok;
       } else {
         // Not finalized: keep the exact operation (same key).
         dispatch({ type: "mutation/unknown", key });
@@ -246,6 +335,7 @@ function TripDashboard({ tripId }: { tripId: string }) {
       dispatch({ type: "mutation/unknown", key });
       setMessage("Network error. Retry the same operation.");
     }
+    return false;
   }
 
   function retryPending(): void {
@@ -296,6 +386,16 @@ function TripDashboard({ tripId }: { tripId: string }) {
     });
   }
 
+  function clearSavedPlan(): void {
+    if (snapshot?.status !== "assigned" || state.pendingOperation) return;
+    if (!window.confirm("Clear the saved assignments? Drivers and passengers will stay registered.")) return;
+    void sendMutation({
+      method: "POST",
+      canonicalRoute: `/api/trips/${tripId}/match/clear`,
+      normalizedBody: { baseVersion: snapshot.version },
+    });
+  }
+
   function registerDriver(name: string, zoneId: string, seatCapacity: number): void {
     void sendMutation({
       method: "POST",
@@ -329,16 +429,83 @@ function TripDashboard({ tripId }: { tripId: string }) {
   }
 
   const pending = state.pendingOperation;
+  const activeDrivers = snapshot?.drivers.filter(driver => driver.active) ?? [];
+  const activePassengers = snapshot?.requests.filter(passenger => passenger.active) ?? [];
   const commitEnabled = canCommit(state);
   const nameOf = (members: Array<{ id: string; name: string }>, id: string) =>
     members.find((m) => m.id === id)?.name ?? id;
 
+  function rosterRow(participant: Driver | Passenger) {
+    if (!snapshot) return null;
+    const driver = "seatCapacity" in participant;
+    const label = driver ? "driver" : "passenger";
+    const disabled = !!pending || storageBlocked;
+    const isEditing = editing?.id === participant.id && editing.baseVersion === snapshot.version;
+    const route = `/api/trips/${tripId}/${driver ? "drivers" : "requests"}/${participant.id}`;
+    const location = participant.location?.label ?? participant.zoneId;
+    return (
+      <li key={participant.id}>
+        <div className="roster-row">
+          <p className="roster-details">
+            <strong>{participant.name}</strong>{" "}
+            <span>
+              ({location})
+              {driver && ` seats ${participant.seatCapacity}`}
+              {driver && participant.maxDetourMinutes !== null && ` · limit ${participant.maxDetourMinutes} min`}
+            </span>
+          </p>
+          <div className="row-actions">
+            {!isEditing && (
+              <button type="button" disabled={disabled} aria-label={`Edit ${label} ${participant.name}`} onClick={() => {
+                setMessage(null);
+                setEditing({ id: participant.id, baseVersion: snapshot.version });
+              }}>
+                Edit {label}
+              </button>
+            )}
+            <button type="button" disabled={!!pending} onClick={() => void sendMutation({
+              method: "PATCH",
+              canonicalRoute: route,
+              normalizedBody: { baseVersion: snapshot.version, active: false },
+            })}>
+              {driver ? "Cancel" : "Withdraw"}
+            </button>
+          </div>
+        </div>
+        {isEditing && (
+          <ParticipantEditForm
+            participant={participant}
+            tripId={tripId}
+            disabled={disabled}
+            onCancel={() => setEditing(null)}
+            onSave={async details => {
+              const saved = await sendMutation({
+                method: "PATCH",
+                canonicalRoute: route,
+                normalizedBody: { baseVersion: editing.baseVersion, details },
+              });
+              if (saved) setEditing(current => current === editing ? null : current);
+            }}
+          />
+        )}
+      </li>
+    );
+  }
+
   return (
-    <main>
-      <h1>Trip</h1>
+    <main className="page dashboard" id="main-content" tabIndex={-1}>
+      <header className="page-heading">
+        <h1>{snapshot?.name ?? "Trip"}</h1>
+        {snapshot ? (
+          <p className="trip-context">
+            {snapshot.locationMode === "zone" && <span>{snapshot.destinationLabel}</span>}
+            <span>Departs <time dateTime={snapshot.departAt}>{departureFormat.format(new Date(snapshot.departAt))} UTC</time></span>
+          </p>
+        ) : null}
+      </header>
       {storageBlocked ? <p role="alert">Session storage unavailable: mutations are blocked.</p> : null}
       {readError ? (
-        <section>
+        <section className="notice">
           <p role="alert">Could not load the current trip.</p>
           <button onClick={() => void refresh()}>Retry load</button>
         </section>
@@ -346,19 +513,20 @@ function TripDashboard({ tripId }: { tripId: string }) {
       {message ? <p role="status">{message}</p> : null}
 
       {pending ? (
-        <section>
-          <p role="status">Pending operation ({pending.method} {pending.canonicalRoute}). Resolve before continuing.</p>
+        <section className="notice">
+          <p role="status">Pending operation. Retry the last change before continuing.</p>
           <button onClick={retryPending}>Retry</button>
         </section>
       ) : null}
 
       {snapshot ? (
         <>
-          <p data-testid="trip-status">
-            Status: {snapshot.status} · Version: {snapshot.version} · Matched: {snapshot.totals.matched} ·{" "}
-            {formatTotal(snapshot.costUnit, snapshot.totals.totalCost)} · Seats available:{" "}
-            {snapshot.totals.seatsAvailable}
-          </p>
+          <div className="trip-summary" data-testid="trip-status" data-version={snapshot.version}>
+            <span className="trip-state" data-state={snapshot.status}>{tripStatusLabels[snapshot.status]}</span>
+            <span>Matched: {snapshot.totals.matched}</span>
+            <span>Seats available: {snapshot.totals.seatsAvailable}</span>
+            <span>{formatTotal(snapshot.costUnit, snapshot.totals.totalCost)}</span>
+          </div>
           {snapshot.venue ? (
             <p data-testid="trip-venue">
               Venue: {snapshot.venue.label} — {snapshot.venue.detail}.{" "}
@@ -369,74 +537,56 @@ function TripDashboard({ tripId }: { tripId: string }) {
             </p>
           ) : null}
 
-          <section>
-            <h2>Register</h2>
-            {snapshot.locationMode === "address" ? (
-              <>
-                <AddressDriverForm tripId={tripId} disabled={!!pending} onSubmit={registerAddressDriver} />
-                <AddressPassengerForm tripId={tripId} disabled={!!pending} onSubmit={registerAddressPassenger} />
-              </>
-            ) : (
-              <>
-                <RegisterDriverForm disabled={!!pending} onSubmit={registerDriver} />
-                <RegisterPassengerForm disabled={!!pending} onSubmit={registerPassenger} />
-              </>
-            )}
+          <InviteLink inviteId={snapshot.inviteId} />
+
+          <section className="card registration">
+            <h2>Register participants</h2>
+            <div className="registration-grid">
+              {snapshot.locationMode === "address" ? (
+                <>
+                  <AddressDriverForm tripId={tripId} disabled={!!pending} onSubmit={registerAddressDriver} />
+                  <AddressPassengerForm tripId={tripId} disabled={!!pending} onSubmit={registerAddressPassenger} />
+                </>
+              ) : (
+                <>
+                  <RegisterDriverForm disabled={!!pending} onSubmit={registerDriver} />
+                  <RegisterPassengerForm disabled={!!pending} onSubmit={registerPassenger} />
+                </>
+              )}
+            </div>
           </section>
 
-          <section>
-            <h2>Drivers</h2>
-            <ul>
-              {snapshot.drivers.map((d) => (
-                <li key={d.id}>
-                  {d.name} ({d.location ? d.location.label : d.zoneId}) seats {d.seatCapacity}
-                  {d.maxDetourMinutes !== null ? ` · limit ${d.maxDetourMinutes} min` : ""}{" "}
-                  {d.active ? "" : "— canceled"}
-                  {d.active ? (
-                    <>
-                      <button
-                        disabled={!!pending}
-                        onClick={() => sendMutation({ method: "PATCH", canonicalRoute: `/api/trips/${tripId}/drivers/${d.id}`, normalizedBody: { baseVersion: snapshot.version, seatCapacity: Math.max(0, d.seatCapacity - 1) } })}
-                      >Reduce capacity</button>
-                      <button
-                        disabled={!!pending}
-                        onClick={() => sendMutation({ method: "PATCH", canonicalRoute: `/api/trips/${tripId}/drivers/${d.id}`, normalizedBody: { baseVersion: snapshot.version, active: false } })}
-                      >Cancel</button>
-                    </>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </section>
+          <div className="roster-grid">
+            <section className="card roster roster-drivers" aria-labelledby="roster-drivers">
+              <h2 id="roster-drivers">Drivers</h2>
+              {activeDrivers.length === 0 ? <p className="empty-state">No active drivers.</p> : null}
+              <ul>{activeDrivers.map(rosterRow)}</ul>
+            </section>
 
-          <section>
-            <h2>Passengers</h2>
-            <ul>
-              {snapshot.requests.map((r) => (
-                <li key={r.id}>
-                  {r.name} ({r.location ? r.location.label : r.zoneId}) {r.active ? "" : "— withdrawn"}
-                  {r.active ? (
-                    <button
-                      disabled={!!pending}
-                      onClick={() => sendMutation({ method: "PATCH", canonicalRoute: `/api/trips/${tripId}/requests/${r.id}`, normalizedBody: { baseVersion: snapshot.version, active: false } })}
-                    >Withdraw</button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </section>
+            <section className="card roster roster-passengers" aria-labelledby="roster-passengers">
+              <h2 id="roster-passengers">Passengers</h2>
+              {activePassengers.length === 0 ? <p className="empty-state">No active passengers.</p> : null}
+              <ul>{activePassengers.map(rosterRow)}</ul>
+            </section>
 
-          <section>
+          </div>
+
+          <section className="card matching">
             <h2>Matching</h2>
-            <button disabled={!!pending || state.previewStatus === "pending"} onClick={() => void preview()}>
-              {state.previewStatus === "retry" ? "Retry preview" : "Preview"}
-            </button>
-            <button disabled={!commitEnabled} onClick={commit}>
-              Save plan (commit)
-            </button>
+            <div className="row-actions">
+              <button type="button" disabled={!!pending || state.previewStatus === "pending"} onClick={() => void preview()}>
+                {state.previewStatus === "retry" ? "Retry preview" : "Preview"}
+              </button>
+              <button type="button" className="primary" disabled={!commitEnabled} onClick={commit}>
+                Save plan
+              </button>
+              {previewDetail && (
+                <button type="button" onClick={() => dispatch({ type: "preview/discard" })}>Discard preview</button>
+              )}
+            </div>
             {previewDetail ? (
-              <div data-testid="preview-ready">
-                <p role="status">Preview for version {previewDetail.baseVersion} (optimal plan).</p>
+              <div data-testid="preview-ready" data-version={previewDetail.baseVersion}>
+                <p role="status">Preview ready to review.</p>
                 <p>
                   Optimal: {previewDetail.optimal.matchedCount} matched,{" "}
                   {previewDetail.costUnit === "detour_seconds"
@@ -451,14 +601,8 @@ function TripDashboard({ tripId }: { tripId: string }) {
                 {previewDetail.estimate ? (
                   <EstimateDetails estimate={previewDetail.estimate} snapshot={snapshot} />
                 ) : null}
-                <ul data-testid="preview-assignments">
-                  {previewDetail.optimal.assignments.map((a) => (
-                    <li key={a.passengerId}>
-                      {nameOf(snapshot.requests, a.passengerId)} →{" "}
-                      {nameOf(snapshot.drivers, a.driverId)} ({formatCost(previewDetail.costUnit ?? "zone_cost", a.cost)})
-                    </li>
-                  ))}
-                </ul>
+                <PlanCards assignments={previewDetail.optimal.assignments} drivers={activeDrivers}
+                  passengers={activePassengers} unit={previewDetail.costUnit ?? snapshot.costUnit} />
                 {previewDetail.optimal.unassignedPassengerIds.length > 0 ? (
                   <p data-testid="preview-unassigned">
                     Unassigned:{" "}
@@ -480,17 +624,15 @@ function TripDashboard({ tripId }: { tripId: string }) {
           </section>
 
           {snapshot.status === "assigned" ? (
-            <section>
-              <h2>Saved plan</h2>
+            <section className="card saved-plan">
+              <div className="plan-heading">
+                <h2>Saved plan</h2>
+                <button type="button" disabled={!!pending || storageBlocked} onClick={clearSavedPlan}>Clear plan</button>
+              </div>
               {snapshot.estimate && <EstimateDetails estimate={snapshot.estimate} snapshot={snapshot} saved />}
-              <ul data-testid="saved-assignments">
-                {snapshot.assignments.map((a) => (
-                  <li key={a.requestId}>
-                    {nameOf(snapshot.requests, a.requestId)} →{" "}
-                    {nameOf(snapshot.drivers, a.driverId)} ({formatCost(snapshot.costUnit, a.pickupCost)})
-                  </li>
-                ))}
-              </ul>
+              <PlanCards assignments={snapshot.assignments.map(({ requestId, driverId, pickupCost }) =>
+                ({ passengerId: requestId, driverId, cost: pickupCost }))}
+                drivers={activeDrivers} passengers={activePassengers} unit={snapshot.costUnit} saved />
               <p data-testid="saved-unassigned">
                 Unassigned:{" "}
                 {snapshot.requests
@@ -502,9 +644,94 @@ function TripDashboard({ tripId }: { tripId: string }) {
           ) : null}
         </>
       ) : (
-        <p>Loading current trip…</p>
+        <p role="status" className="empty-state">{readError ? "Trip unavailable." : "Loading current trip…"}</p>
       )}
     </main>
+  );
+}
+
+function ZoneOptions() {
+  return ["north", "east", "south", "west"].map(zone => (
+    <option key={zone} value={zone}>{zone}</option>
+  ));
+}
+
+function ParticipantEditForm({
+  participant, tripId, disabled, onCancel, onSave,
+}: {
+  participant: Driver | Passenger;
+  tripId: string;
+  disabled: boolean;
+  onCancel: () => void;
+  onSave: (details: Record<string, string | number>) => Promise<void>;
+}) {
+  const [changeAddress, setChangeAddress] = useState(false);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const driver = "seatCapacity" in participant;
+  const label = driver ? "driver" : "passenger";
+  const address = participant.location;
+  return (
+    <form className="participant-edit" aria-label={`Edit ${label} details`} onSubmit={event => {
+      event.preventDefault();
+      if (disabled || (changeAddress && !selection)) return;
+      const fields = new FormData(event.currentTarget);
+      const checked = validateName(String(fields.get("name") ?? ""));
+      if (!checked.ok) {
+        setError(checked.reason);
+        return;
+      }
+      const details: Record<string, string | number> = { name: checked.value };
+      if (driver) {
+        details.seatCapacity = Number(fields.get("seats"));
+        if (address) details.maxDetourMinutes = Number(fields.get("detour"));
+      }
+      if (!address) details.zoneId = String(fields.get("zone"));
+      if (changeAddress && selection) {
+        details[driver ? "startSelectionToken" : "pickupSelectionToken"] = selection.token;
+      }
+      setError(null);
+      void onSave(details);
+    }}>
+      <label>Name<input name="name" defaultValue={participant.name} required disabled={disabled} /></label>
+      {address ? (
+        <>
+          <p>Current address: {address.detail}</p>
+          <label className="checkbox-label">
+            <input type="checkbox" checked={changeAddress} disabled={disabled} onChange={event => {
+              setChangeAddress(event.target.checked);
+              setSelection(null);
+            }} />
+            Change address
+          </label>
+          {changeAddress && (
+            <LocationPicker label={driver ? "New driver start address" : "New passenger pickup address"}
+              purpose={driver ? "driver_start" : "pickup"} tripId={tripId} disabled={disabled} onSelect={setSelection} />
+          )}
+        </>
+      ) : (
+        <label>Pickup zone
+          <select name="zone" defaultValue={participant.zoneId ?? ""} disabled={disabled} required><ZoneOptions /></select>
+        </label>
+      )}
+      {driver && (
+        <label>Seats available
+          <input name="seats" type="number" min={LIMITS.seatMin} max={LIMITS.seatMax}
+            defaultValue={participant.seatCapacity} disabled={disabled} required />
+        </label>
+      )}
+      {driver && address && (
+        <label>Detour limit (minutes)
+          <input name="detour" type="number" min={LIMITS.detourMinutesMin} max={LIMITS.detourMinutesMax}
+            defaultValue={participant.maxDetourMinutes ?? undefined} disabled={disabled} required />
+        </label>
+      )}
+      {error && <p role="alert">{error}</p>}
+      <div className="row-actions">
+        <button type="submit" disabled={disabled || (changeAddress && !selection)}>Save changes</button>
+        <button type="button" disabled={disabled} onClick={onCancel}>Cancel edit</button>
+      </div>
+    </form>
   );
 }
 
@@ -536,21 +763,19 @@ function RegisterDriverForm({
         setName("");
       }}
     >
-      <input aria-label="driver name" value={name} onChange={(e) => setName(e.target.value)} />
-      <select aria-label="driver zone" value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
-        <option value="north">north</option>
-        <option value="east">east</option>
-        <option value="south">south</option>
-        <option value="west">west</option>
-      </select>
-      <input
+      <h3>Driver</h3>
+      <label>Name<input aria-label="driver name" value={name} onChange={(e) => setName(e.target.value)} /></label>
+      <label>Pickup zone<select aria-label="driver zone" value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
+        <ZoneOptions />
+      </select></label>
+      <label>Seats available<input
         aria-label="driver seats"
         type="number"
         min={0}
         max={8}
         value={seatCapacity}
         onChange={(e) => setSeatCapacity(Number(e.target.value))}
-      />
+      /></label>
       <button type="submit" disabled={disabled}>Add driver</button>
       {fieldError ? <span role="alert">{fieldError}</span> : null}
     </form>
@@ -582,13 +807,11 @@ function RegisterPassengerForm({
         setName("");
       }}
     >
-      <input aria-label="passenger name" value={name} onChange={(e) => setName(e.target.value)} />
-      <select aria-label="passenger zone" value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
-        <option value="north">north</option>
-        <option value="east">east</option>
-        <option value="south">south</option>
-        <option value="west">west</option>
-      </select>
+      <h3>Passenger</h3>
+      <label>Name<input aria-label="passenger name" value={name} onChange={(e) => setName(e.target.value)} /></label>
+      <label>Pickup zone<select aria-label="passenger zone" value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
+        <ZoneOptions />
+      </select></label>
       <button type="submit" disabled={disabled}>Add passenger</button>
       {fieldError ? <span role="alert">{fieldError}</span> : null}
     </form>
@@ -636,7 +859,8 @@ function AddressDriverForm({
         setResetSignal((n) => n + 1);
       }}
     >
-      <input aria-label="driver name" value={name} onChange={(e) => setName(e.target.value)} />
+      <h3>Driver</h3>
+      <label>Name<input aria-label="driver name" value={name} onChange={(e) => setName(e.target.value)} /></label>
       <LocationPicker
         label="Driver start address"
         purpose="driver_start"
@@ -645,22 +869,22 @@ function AddressDriverForm({
         onSelect={setStart}
         resetSignal={resetSignal}
       />
-      <input
+      <label>Seats available<input
         aria-label="driver seats"
         type="number"
         min={0}
         max={8}
         value={seatCapacity}
         onChange={(e) => setSeatCapacity(Number(e.target.value))}
-      />
-      <input
+      /></label>
+      <label>Detour limit (minutes)<input
         aria-label="driver detour limit (minutes)"
         type="number"
         min={0}
         max={120}
         value={maxDetour}
         onChange={(e) => setMaxDetour(Number(e.target.value))}
-      />
+      /></label>
       <button type="submit" disabled={disabled || !start}>Add driver</button>
       {fieldError ? <span role="alert">{fieldError}</span> : null}
     </form>
@@ -701,7 +925,8 @@ function AddressPassengerForm({
         setResetSignal((n) => n + 1);
       }}
     >
-      <input aria-label="passenger name" value={name} onChange={(e) => setName(e.target.value)} />
+      <h3>Passenger</h3>
+      <label>Name<input aria-label="passenger name" value={name} onChange={(e) => setName(e.target.value)} /></label>
       <LocationPicker
         label="Passenger pickup address"
         purpose="pickup"

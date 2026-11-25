@@ -55,6 +55,7 @@ export type TripAction =
   // A GET read returned for a specific read generation.
   | { type: "get/received"; generation: number; snapshot: TripSnapshotView }
   | { type: "preview/start" }
+  | { type: "preview/discard" }
   | { type: "preview/failed"; generation: number; currentVersion?: number }
   // A preview returned for a specific preview generation.
   | { type: "preview/received"; generation: number; preview: PreviewView }
@@ -118,6 +119,9 @@ function reduceTrip(state: TripState, action: TripAction): TripState {
   switch (action.type) {
     case "preview/start":
       return { ...state, preview: null, previewStatus: "pending", previewGeneration: state.previewGeneration + 1 };
+
+    case "preview/discard":
+      return { ...state, preview: null, previewStatus: "idle", previewGeneration: state.previewGeneration + 1 };
 
     case "preview/failed": {
       const floor = raiseFloor(state, action.currentVersion);

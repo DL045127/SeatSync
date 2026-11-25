@@ -236,7 +236,9 @@ describe("L-12: the serialized responses, the SQL, and the policy upgrade", () =
     expect(keysOf(cold.estimate!)).toEqual(["costUnit", "legs", "observedFrom", "observedTo", "provider", "routingPolicy"]);
     expect(keysOf(cold.estimate!.legs)).toEqual(["fetched", "local", "required", "reused"]);
     expect(keysOf(commit as object)).toEqual(["costUnit", "matchedCount", "mutationVersion", "operation", "previewId", "totalCost"]);
-    expect(keysOf(dashboard)).toEqual(["algorithmVersion", "assignments", "committedPreviewId", "costUnit", "departAt", "destinationLabel", "drivers", "estimate", "id", "locationMode", "name", "planVersion", "requests", "status", "totals", "venue", "version"]);
+    expect(keysOf(dashboard)).toEqual(["algorithmVersion", "assignments", "committedPreviewId", "costUnit", "departAt", "destinationLabel", "drivers", "estimate", "id", "inviteId", "locationMode", "name", "planVersion", "requests", "status", "totals", "venue", "version"]);
+    expect(dashboard.inviteId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(dashboard.inviteId).not.toBe(dashboard.id);
     expect(keysOf(dashboard.drivers[0])).toEqual(["active", "id", "location", "maxDetourMinutes", "name", "seatCapacity", "zoneId"]);
     expect(keysOf(dashboard.requests[0])).toEqual(["active", "id", "location", "name", "zoneId"]);
     expect(keysOf(dashboard.drivers[0].location!)).toEqual(["attribution", "detail", "label", "precision", "provider"]);

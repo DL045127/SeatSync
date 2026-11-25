@@ -6,6 +6,7 @@
 //   Delta->Alpha 403 s + Alpha->Hall 346 s - Delta->Hall 519 s = 230 s = 3 min 50 s
 
 import { expect, test, type Page } from "@playwright/test";
+import { fillDeparture } from "./departure.ts";
 
 const VENUE = "GROUPRIDE FIXTURE — Event Hall";
 
@@ -23,9 +24,8 @@ function watchExternalRequests(page: Page): string[] {
 }
 
 async function version(page: Page): Promise<number> {
-  const text = (await page.getByTestId("trip-status").textContent()) ?? "";
-  const m = /Version:\s*(\d+)/.exec(text);
-  return m ? Number(m[1]) : -1;
+  const value = await page.getByTestId("trip-status").getAttribute("data-version");
+  return value === null ? -1 : Number(value);
 }
 
 /** Type into a combobox and choose the first selectable suggestion with the keyboard only. */
@@ -42,7 +42,7 @@ async function createAddressTrip(page: Page, name: string): Promise<string> {
   await page.goto("/");
   await page.getByLabel("Trip type").selectOption("address");
   await page.getByLabel("Trip name").fill(name);
-  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await fillDeparture(page, "2027-03-05", "17:30", "America/Chicago");
   // Submission is blocked until an address is actually selected.
   await expect(page.getByRole("button", { name: "Create trip" })).toBeDisabled();
   await chooseByKeyboard(page, "Venue", "event hall", VENUE);
@@ -51,6 +51,66 @@ async function createAddressTrip(page: Page, name: string): Promise<string> {
   await page.waitForURL(/\/trips\/[0-9a-f-]+$/);
   return page.url().slice(page.url().lastIndexOf("/") + 1);
 }
+
+test.describe("phone layout", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("a venue can be selected by touch and the trip dashboard fits the viewport", async ({ page }) => {
+    await page.goto("/");
+    await page.getByLabel("Trip name").fill("Mobile event");
+    await page.getByLabel("Trip type").selectOption("address");
+    await page.getByRole("combobox", { name: "Venue" }).fill("event hall");
+    await suggestions(page).first().tap();
+    await expect(page.getByText(`Selected: ${VENUE}`)).toBeVisible();
+    await fillDeparture(page, "2027-03-05", "17:30", "America/Chicago");
+    const fitsViewport = () => page.evaluate(() => document.documentElement.scrollWidth === window.innerWidth);
+    expect(await fitsViewport()).toBe(true);
+    await page.getByRole("button", { name: "Create trip" }).tap();
+    await expect(page.getByRole("heading", { level: 1, name: "Mobile event" })).toBeVisible();
+    await expect(page.getByTestId("driver-form")).toBeVisible();
+    await expect(page.getByTestId("passenger-form")).toBeVisible();
+    expect(await fitsViewport()).toBe(true);
+  });
+});
+
+test("edit address participants with a confirmed replacement or retain the current address", async ({ page }) => {
+  const external = watchExternalRequests(page);
+  await createAddressTrip(page, "Edit address participants");
+  await page.getByLabel("driver name").fill("Dana");
+  await chooseByKeyboard(page, "Driver start address", "delta", "GROUPRIDE FIXTURE — Driver Start Delta");
+  await page.getByRole("button", { name: "Add driver" }).click();
+  await expect(page.getByRole("button", { name: "Edit driver Dana" })).toBeVisible();
+  await page.getByLabel("passenger name").fill("Alex");
+  await chooseByKeyboard(page, "Passenger pickup address", "pickup alpha", "GROUPRIDE FIXTURE — Pickup Alpha");
+  await page.getByRole("button", { name: "Add passenger" }).click();
+  await expect(page.getByRole("button", { name: "Edit passenger Alex" })).toBeVisible();
+
+  const driver = page.getByRole("form", { name: "Edit driver details" });
+  await page.getByRole("button", { name: "Edit driver Dana" }).click();
+  await expect(driver.getByText(/Current address:/)).toBeVisible();
+  await driver.getByLabel("Change address").check();
+  const saveDriver = driver.getByRole("button", { name: "Save changes" });
+  await expect(saveDriver).toBeDisabled();
+  await chooseByKeyboard(page, "New driver start address", "echo", "GROUPRIDE FIXTURE — Driver Start Echo");
+  await driver.getByLabel("Detour limit (minutes)").fill("7");
+  await saveDriver.click();
+  await expect(page.getByText(/Dana \(GROUPRIDE FIXTURE — Driver Start Echo\) seats 1 · limit 7 min/)).toBeVisible();
+
+  const passenger = page.getByRole("form", { name: "Edit passenger details" });
+  await page.getByRole("button", { name: "Edit passenger Alex" }).click();
+  await passenger.getByLabel("Name").fill("Avery");
+  await passenger.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Avery \(GROUPRIDE FIXTURE — Pickup Alpha\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Edit passenger Avery" }).click();
+  await passenger.getByLabel("Change address").check();
+  await chooseByKeyboard(page, "New passenger pickup address", "pickup bravo", "GROUPRIDE FIXTURE — Pickup Bravo");
+  await passenger.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Avery \(GROUPRIDE FIXTURE — Pickup Bravo\)/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(/Dana \(GROUPRIDE FIXTURE — Driver Start Echo\) seats 1 · limit 7 min/)).toBeVisible();
+  await expect(page.getByText(/Avery \(GROUPRIDE FIXTURE — Pickup Bravo\)/)).toBeVisible();
+  expect(external).toEqual([]);
+});
 
 test("L-03: keyboard search, confirm, register, preview, save and reload, with fixture labelling and zero outbound requests", async ({ page }) => {
   const external = watchExternalRequests(page);
@@ -64,33 +124,36 @@ test("L-03: keyboard search, confirm, register, preview, save and reload, with f
   await page.getByLabel("driver seats").fill("1");
   await expect(page.getByLabel("driver detour limit (minutes)")).toHaveValue("15"); // the proposed default
   await page.getByTestId("driver-form").getByRole("button", { name: "Add driver" }).click();
-  await expect(page.getByTestId("trip-status")).toContainText(`Version: ${before + 1}`);
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before + 1));
   await expect(page.getByText(/Dana \(GROUPRIDE FIXTURE — Driver Start Delta\) seats 1 · limit 15 min/)).toBeVisible();
 
   before = await version(page);
   await page.getByLabel("passenger name").fill("Pat");
   await chooseByKeyboard(page, "Passenger pickup address", "pickup alpha", "GROUPRIDE FIXTURE — Pickup Alpha");
   await page.getByTestId("passenger-form").getByRole("button", { name: "Add passenger" }).click();
-  await expect(page.getByTestId("trip-status")).toContainText(`Version: ${before + 1}`);
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before + 1));
   await expect(page.getByText(/Pending operation/)).toHaveCount(0);
 
   // Preview shows the named pairing, its unit and the fixture provenance BEFORE saving.
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByTestId("preview-ready")).toBeVisible();
-  await expect(page.getByTestId("preview-assignments")).toContainText("Pat → Dana (extra 3 min 50 s)");
+  await expect(page.getByTestId("preview-assignments").getByRole("article", { name: "Dana" }).getByRole("listitem"))
+    .toHaveText(/Pat.*extra 3 min 50 s/);
   await expect(page.getByTestId("preview-ready")).toContainText("sum of estimated individual pickup detours 3 min 50 s");
   await expect(page.getByTestId("preview-estimate")).toContainText("Fixture estimate: fictional driving times.");
 
-  await page.getByRole("button", { name: "Save plan (commit)" }).click();
-  await expect(page.getByTestId("trip-status")).toContainText("Status: assigned");
+  await page.getByRole("button", { name: "Save plan" }).click();
+  await expect(page.getByTestId("trip-status")).toContainText("Plan saved");
   await expect(page.getByTestId("trip-status")).toContainText("Matched: 1");
   await expect(page.getByTestId("trip-status")).toContainText("Sum of estimated individual pickup detours: 3 min 50 s (230 s)");
-  await expect(page.getByTestId("saved-assignments")).toContainText("Pat → Dana (extra 3 min 50 s)");
+  await expect(page.getByTestId("saved-assignments").getByRole("article", { name: "Dana" }).getByRole("listitem"))
+    .toHaveText(/Pat.*extra 3 min 50 s/);
 
   // Reload reproduces the reviewed assignment and its estimate.
   await page.reload();
-  await expect(page.getByTestId("trip-status")).toContainText("Status: assigned");
-  await expect(page.getByTestId("saved-assignments")).toContainText("Pat → Dana (extra 3 min 50 s)");
+  await expect(page.getByTestId("trip-status")).toContainText("Plan saved");
+  await expect(page.getByTestId("saved-assignments").getByRole("article", { name: "Dana" }).getByRole("listitem"))
+    .toHaveText(/Pat.*extra 3 min 50 s/);
   await expect(page.getByTestId("trip-venue")).toContainText("Fixture data");
   expect(external).toEqual([]); // the whole workflow stayed on loopback
 });
@@ -123,7 +186,7 @@ test("ISSUE-084: the picker asks which building, clears the old choice and accep
   await page.goto("/");
   await page.getByLabel("Trip type").selectOption("address");
   await page.getByLabel("Trip name").fill("Clarify the venue");
-  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await fillDeparture(page, "2027-03-05", "17:30", "America/Chicago");
   await chooseByKeyboard(page, "Venue", "event hall", VENUE);
   const box = page.getByRole("combobox", { name: "Venue" });
   const create = page.getByRole("button", { name: "Create trip" });
@@ -155,7 +218,7 @@ test("L-03: editing the text clears the selection, so the form cannot submit a s
   await page.goto("/");
   await page.getByLabel("Trip type").selectOption("address");
   await page.getByLabel("Trip name").fill("Edit Clears");
-  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await fillDeparture(page, "2027-03-05", "17:30", "America/Chicago");
   await chooseByKeyboard(page, "Venue", "event hall", VENUE);
   await expect(page.getByRole("button", { name: "Create trip" })).toBeEnabled();
   await page.getByRole("combobox", { name: "Venue" }).pressSequentially("x");
@@ -249,7 +312,7 @@ test("ISSUE-056: switching Addresses -> Zones -> Addresses leaves no hidden venu
   await page.goto("/");
   await page.getByLabel("Trip type").selectOption("address");
   await page.getByLabel("Trip name").fill("Hidden Venue");
-  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await fillDeparture(page, "2027-03-05", "17:30", "America/Chicago");
   await chooseByKeyboard(page, "Venue", "event hall", VENUE);
   await expect(page.getByRole("button", { name: "Create trip" })).toBeEnabled();
 
@@ -282,7 +345,7 @@ test("ISSUE-056: a zone trip is still created normally after visiting address mo
   await page.getByLabel("Trip type").selectOption("zone");
   await page.getByLabel("Trip name").fill("Zone After Address");
   await page.getByLabel("Destination").fill("Student Union");
-  await page.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
+  await fillDeparture(page, "2026-03-01", "09:30");
   await page.getByRole("button", { name: "Create trip" }).click();
   await page.waitForURL(/\/trips\/[0-9a-f-]+$/);
   await expect(page.getByTestId("trip-venue")).toHaveCount(0); // a zone trip: no venue
@@ -291,7 +354,7 @@ test("ISSUE-056: a zone trip is still created normally after visiting address mo
 test("L-17: delayed, failed and superseded estimates leave Save with the current generation", async ({ page }) => {
   await createAddressTrip(page, "Waiting organizer");
   const preview = page.getByRole("button", { name: "Preview", exact: true });
-  const save = page.getByRole("button", { name: "Save plan (commit)" });
+  const save = page.getByRole("button", { name: "Save plan" });
   await preview.click();
   await expect(save).toBeEnabled();
 
@@ -333,7 +396,7 @@ test("L-17: delayed, failed and superseded estimates leave Save with the current
     await page.getByLabel("passenger name").fill(failure ? "Pat" : "Lee");
     await chooseByKeyboard(page, "Passenger pickup address", "pickup alpha", "GROUPRIDE FIXTURE — Pickup Alpha");
     await page.getByTestId("passenger-form").getByRole("button", { name: "Add passenger" }).click();
-    await expect(page.getByTestId("trip-status")).toContainText(`Version: ${before + 1}`);
+    await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before + 1));
     await preview.click();
     await expect(page.locator("html")).toHaveAttribute("data-waiting", "2");
     await deliver(failure, 1);
@@ -342,7 +405,7 @@ test("L-17: delayed, failed and superseded estimates leave Save with the current
     await expect(save).toBeDisabled();
     await deliver(false, 0);
     await expect(save).toBeEnabled();
-    await expect(page.getByTestId("preview-ready")).toContainText(`Preview for version ${before + 1}`);
+    await expect(page.getByTestId("preview-ready")).toHaveAttribute("data-version", String(before + 1));
   }
 });
 
@@ -357,7 +420,7 @@ test("L-17: browser deadline aborts a stalled response and Retry recovers the sa
     winner = (await response.json()).previewId;
     // The server published, but delivery to the browser is deliberately stalled.
   });
-  const save = page.getByRole("button", { name: "Save plan (commit)" });
+  const save = page.getByRole("button", { name: "Save plan" });
   await page.getByRole("button", { name: "Preview", exact: true }).click();
   await expect(page.getByText("Estimating pickup times…")).toBeVisible();
   const retry = page.getByRole("button", { name: "Retry preview" });
@@ -410,14 +473,14 @@ test("L-18: live-format fixture credits remain visible on suggestions, previews 
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("Geoapify receives the selected driver start, passenger pickup, and venue coordinates");
   await page.getByLabel("Trip name").fill("Credit display");
-  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await fillDeparture(page, "2027-03-05", "17:30", "America/Chicago");
   await page.getByRole("combobox", { name: "Venue" }).fill("event hall");
   await credits("provider-attribution");
   await suggestions(page).first().click();
   await page.getByRole("button", { name: "Create trip" }).click();
   await page.getByRole("button", { name: "Preview", exact: true }).click();
   await credits("preview-estimate");
-  await page.getByRole("button", { name: "Save plan (commit)" }).click();
+  await page.getByRole("button", { name: "Save plan" }).click();
   await credits("saved-estimate");
   await page.reload();
   await credits("saved-estimate");

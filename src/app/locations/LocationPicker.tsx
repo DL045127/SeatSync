@@ -39,6 +39,7 @@ export function LocationPicker({
   label,
   purpose,
   tripId,
+  inviteId,
   disabled,
   onSelect,
   resetSignal,
@@ -46,6 +47,7 @@ export function LocationPicker({
   label: string;
   purpose: Purpose;
   tripId?: string;
+  inviteId?: string;
   disabled?: boolean;
   onSelect: (selection: Selection | null) => void;
   /** Change this value to clear the field after a successful submission. */
@@ -104,7 +106,7 @@ export function LocationPicker({
     const abort = new AbortController();
     controller.current = abort;
     try {
-      const res = await fetch("/api/locations/search", {
+      const res = await fetch(inviteId ? `/api/invites/${inviteId}/search` : "/api/locations/search", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(tripId ? { query: text, purpose, tripId } : { query: text, purpose }),
@@ -212,8 +214,8 @@ export function LocationPicker({
   const showList = open && suggestions.length > 0;
 
   return (
-    <div data-testid={`picker-${purpose}`}>
-      <p>In live mode, Geoapify receives your search text and the trip venue’s coordinates when available. For driving estimates, Geoapify receives the selected driver start, passenger pickup, and venue coordinates.</p>
+    <div className="location-picker" data-testid={`picker-${purpose}`}>
+      <p className="picker-notice">In live mode, Geoapify receives your search text and the trip venue’s coordinates when available. For driving estimates, Geoapify receives the selected driver start, passenger pickup, and venue coordinates.</p>
       <label>
         {label}
         <input
@@ -223,6 +225,7 @@ export function LocationPicker({
           aria-autocomplete="list"
           aria-activedescendant={showList && active >= 0 ? optionId(active) : undefined}
           autoComplete="off"
+          placeholder="Enter a name or street address"
           value={query}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
@@ -250,7 +253,7 @@ export function LocationPicker({
           </li>
         ))}
       </ul>
-      <p role="status" aria-live="polite">
+      <p className={selected ? "picker-status is-selected" : "picker-status"} role="status" aria-live="polite">
         {status === "searching" ? "Searching…" : null}
         {status === "empty" ? "No matching address. Try more of the name or street." : null}
         {selected ? `Selected: ${selected.label}` : null}

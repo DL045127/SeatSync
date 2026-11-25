@@ -128,10 +128,13 @@ Use JSON route handlers. Creation, roster mutations, and commit require `Idempot
 | `GET /api/trips/:id` | None | Consistent trip/version/status, active/inactive roster, committed assignments and derived totals |
 | `POST /api/trips/:id/drivers` | `{ name, zoneId, seatCapacity }` | Append driver within record limit |
 | `POST /api/trips/:id/requests` | `{ name, zoneId }` | Append passenger within record limit |
-| `PATCH /api/trips/:id/drivers/:driverId` | `{ baseVersion, seatCapacity }` or `{ baseVersion, active: false }` | Edit/cancel against current version |
-| `PATCH /api/trips/:id/requests/:requestId` | `{ baseVersion, active: false }` | Withdraw against current version; no DELETE request body |
+| `PATCH /api/trips/:id/drivers/:driverId` | `{ baseVersion, details: { name, zoneId, seatCapacity } }`, `{ baseVersion, seatCapacity }` or `{ baseVersion, active: false }` | Edit or cancel a driver at the current version |
+| `PATCH /api/trips/:id/requests/:requestId` | `{ baseVersion, details: { name, zoneId } }` or `{ baseVersion, active: false }` | Edit or withdraw a passenger at the current version |
 | `POST /api/trips/:id/match/preview` | `{}` | Return `{ previewId, baseVersion, algorithmVersion, optimal, greedy }` from a persisted server preview |
 | `POST /api/trips/:id/match/commit` | `{ previewId }` | Commit that stored preview if its version and algorithm remain current |
+| `POST /api/trips/:id/match/clear` | `{ baseVersion }` | Clear the saved assignment plan at the current version |
+
+Details edits update an active registration in place under the trip lock and use the same receipts and whole-plan invalidation as other roster changes. A details submission equal to the stored registration succeeds without changing its version or invalidating its saved plan.
 
 A `MatchingResult` is `{ assignments: [{ passengerId, driverId, cost }], unassignedPassengerIds, matchedCount, totalCost }`. Only the stored optimal result is committable. No allocation, digest, or client-supplied expected cost is accepted by commit.
 
@@ -160,9 +163,17 @@ Keys are now globally unique across creation, roster changes, and matching commi
 
 All normalized mutations use the shared transaction helper in section 6. Persist both successful outcomes and terminal business rejections/internal failures. Transport errors, database unavailability, lock/statement timeouts, and uncertain transaction commits do not finalize a key. Malformed requests that cannot be normalized fail before this helper and have no terminal operation metadata; the browser validates with the shared contract before saving/sending an operation. Missing or unrecognized metadata never permits an ambiguous pending operation to be discarded.
 
+### Guest invitations
+
+Migration 004 gives each trip a unique random invitation ID. The organizer snapshot includes it. `/join/:inviteId` looks up that capability and exposes the trip name, destination, departure, and location mode. It uses the same registration service via `POST /api/invites/:inviteId/drivers` and `POST /api/invites/:inviteId/requests`. The mutation helper keys receipts by the invitation route and resolves the trip under its row lock. Guest registrations follow the same limits and plan invalidation rules. The invite page retains an unresolved submission for same-key retry.
+
+The invitation ID is separate from the organizer trip ID. The guest page carries neither the organizer ID nor the roster, and public endpoints accept registration and pickup search only. Organizer URLs act as private bearer links under the existing local application model. The guest link is transferable and the dashboard refreshes through the existing read path.
+
 ### Browser recovery and response ordering
 
 Use `/` for trip creation and `/trips/:id` for the roster, preview comparison, and saved plan. Keep one fetched trip snapshot, local forms, and separate preview state. All trip fetches/responses use `no-store`; no framework database-result cache. No automatic polling is required.
+
+The shared application header links to trip creation and provides a skip link to the main content. The organizer workspace groups registration, rosters, preview actions, and the saved plan. Registration and roster columns stack on narrow screens. The organizer roster shows only active participants in compact rows. Driver rows use green and passenger rows use blue alongside the roster headings. Row actions stay beside the details when space permits and wrap on narrower screens. The preview and saved plan group passengers under their active driver and show unassigned passengers separately. Driver cards also make unused seats visible. The trip snapshot carries both active and inactive records for the existing read contract. The address picker keeps its disclosure, keyboard controls, and provider attribution in view. Trip creation resolves the selected calendar date, local time and IANA time zone to the existing UTC timestamp before claiming the pending operation. The form rejects skipped clock times and asks the organizer to choose an occurrence when the clock repeats. The trip header displays the saved departure in UTC.
 
 Allow one unresolved mutation per tab. Before first transmission, write its key, method, canonical route, normalized body, and trip ID where available to a versioned `sessionStorage` entry. If storage cannot be written, block mutations with a visible error; reads/previews still work. On same-tab reload, offer retry of the stored operation with its original key/body. Only a matching receipt-backed `applied` or `not_applied` response clears it, including a finalized `500`. Network errors, `unknown`, missing metadata, and unfinalized `503` responses retain the exact operation. Do not generate a replacement key for an uncertain operation. A delayed reply for an old key cannot resolve a newer pending operation. Recovery after closing the tab/clearing browser storage is outside the MVP.
 
@@ -222,6 +233,8 @@ Send terminal metadata only after a confirmed receipt commit (or replay of an ex
 6. On terminal failure, undo business work and finalize `not_applied` through the helper. On uncertain commit acknowledgement, discard the connection and preserve the request key; a fresh connection and same-key retry replays either terminal outcome if committed or safely attempts the operation if not.
 
 There is **no optimizer invocation during commit**. Two different keys committing previews from one version permit one success; a same-key retry permits one effect. A new roster change after commit invalidates the plan normally. Old-algorithm success receipts can still replay; uncommitted old-algorithm previews cannot commit.
+
+Clearing a saved plan uses the same keyed mutation helper and trip lock. Check the expected version, delete assignments, clear saved plan metadata, and advance the version with status `needs_rematch`. Drivers and passengers stay registered. A current-version request for a trip without a saved plan records a successful no-op. A same-key replay returns its original receipt, even after a replacement plan is saved. Discarding an unsaved preview only updates browser state. The organizer sees whether the preview is ready, while the version remains part of the API and stale-save checks.
 
 ```mermaid
 sequenceDiagram

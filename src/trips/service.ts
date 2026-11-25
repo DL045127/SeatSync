@@ -13,10 +13,11 @@ import {
   isAddressCreateTrip,
   normalizeAddDriver,
   normalizeAddRequest,
+  normalizeClearPlan,
   normalizeCreateTrip,
   normalizeEditDriver,
+  normalizeEditRequest,
   normalizeUuid,
-  normalizeWithdrawRequest,
 } from "../contracts/index.ts";
 import { verifyAttachment } from "../locations/selection-service.ts";
 import { parseStoredSnapshot, type LocationSnapshot } from "../locations/snapshot.ts";
@@ -56,6 +57,7 @@ function viewOf(value: unknown): LocationView {
 
 export interface TripSnapshot {
   id: string;
+  inviteId: string;
   name: string;
   destinationLabel: string;
   departAt: string;
@@ -157,6 +159,21 @@ export async function getTripSnapshot(
   });
 }
 
+export async function getTripInvitation(pool: Pool, inviteIdRaw: string) {
+  const inviteId = normalizeUuid(inviteIdRaw);
+  return withTransaction(pool, "read", async client => {
+    await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
+    await assertDataset(client);
+    const trip = await repo.readTrip(client, inviteId, true);
+    return trip ? {
+      name: trip.name,
+      destinationLabel: trip.destination_label,
+      departAt: new Date(trip.depart_at).toISOString(),
+      locationMode: trip.location_mode,
+    } : undefined;
+  });
+}
+
 function toSnapshot(
   trip: repo.TripRow,
   drivers: repo.DriverRow[],
@@ -170,6 +187,7 @@ function toSnapshot(
     .reduce((s, d) => s + d.seat_capacity, 0);
   return {
     id: trip.id,
+    inviteId: trip.invite_id,
     name: trip.name,
     destinationLabel: trip.destination_label,
     departAt: trip.depart_at,
@@ -254,8 +272,9 @@ export async function addDriver(
   tripIdRaw: string,
   requestKey: string,
   rawBody: unknown,
+  byInvite = false,
 ): Promise<MutationResponse> {
-  const tripId = normalizeUuid(tripIdRaw);
+  const scopeId = normalizeUuid(tripIdRaw);
   const key = normalizeUuid(requestKey);
   const body = normalizeAddDriver(rawBody, canonicalZoneIds);
   return runKeyedMutation({
@@ -263,16 +282,17 @@ export async function addDriver(
     request: {
       requestKey: key,
       method: "POST",
-      canonicalRoute: `/api/trips/${tripId}/drivers`,
+      canonicalRoute: `/api/${byInvite ? "invites" : "trips"}/${scopeId}/drivers`,
       normalizedBody: body,
     },
-    lockTrip: (client) => lockTripOr404(client, tripId),
+    lockTrip: (client) => lockTripOr404(client, scopeId, byInvite),
     work: async ({ client, locked }): Promise<AppliedResult> => {
+      const tripId = locked.id;
       requireTripMode(locked, isAddressAddDriver(body) ? "address" : "zone");
       const start = isAddressAddDriver(body)
         ? await verifyAttachment(client, body.startSelectionToken, {
             purpose: "driver_start",
-            tripId,
+            tripId: scopeId,
             provider: tripProvider(locked),
           })
         : undefined;
@@ -303,8 +323,9 @@ export async function addRequest(
   tripIdRaw: string,
   requestKey: string,
   rawBody: unknown,
+  byInvite = false,
 ): Promise<MutationResponse> {
-  const tripId = normalizeUuid(tripIdRaw);
+  const scopeId = normalizeUuid(tripIdRaw);
   const key = normalizeUuid(requestKey);
   const body = normalizeAddRequest(rawBody, canonicalZoneIds);
   return runKeyedMutation({
@@ -312,16 +333,17 @@ export async function addRequest(
     request: {
       requestKey: key,
       method: "POST",
-      canonicalRoute: `/api/trips/${tripId}/requests`,
+      canonicalRoute: `/api/${byInvite ? "invites" : "trips"}/${scopeId}/requests`,
       normalizedBody: body,
     },
-    lockTrip: (client) => lockTripOr404(client, tripId),
+    lockTrip: (client) => lockTripOr404(client, scopeId, byInvite),
     work: async ({ client, locked }): Promise<AppliedResult> => {
+      const tripId = locked.id;
       requireTripMode(locked, isAddressAddRequest(body) ? "address" : "zone");
       const pickup = isAddressAddRequest(body)
         ? await verifyAttachment(client, body.pickupSelectionToken, {
             purpose: "pickup",
-            tripId,
+            tripId: scopeId,
             provider: tripProvider(locked),
           })
         : undefined;
@@ -351,7 +373,7 @@ export async function editDriver(
   const tripId = normalizeUuid(tripIdRaw);
   const driverId = normalizeUuid(driverIdRaw);
   const key = normalizeUuid(requestKey);
-  const body = normalizeEditDriver(rawBody);
+  const body = normalizeEditDriver(rawBody, canonicalZoneIds);
   return runKeyedMutation({
     pool,
     request: {
@@ -376,13 +398,26 @@ export async function editDriver(
         return appliedRoster(key, 200, { mutationVersion: version });
       }
 
-      // Capacity edit requires an active driver.
+      // Editing requires an active driver.
       if (!driver.active) {
         throw new TerminalBusinessError(
           422,
           "RESOURCE_INACTIVE",
-          "Cannot edit the capacity of a canceled driver.",
+          "Cannot edit a canceled driver.",
         );
+      }
+      if ("details" in body) {
+        const details = body.details;
+        const zone = "zoneId" in details;
+        requireTripMode(trip, zone ? "zone" : "address");
+        const location = !zone && details.startSelectionToken !== undefined
+          ? await verifyAttachment(client, details.startSelectionToken, {
+              purpose: "driver_start", tripId, provider: tripProvider(trip),
+            })
+          : undefined;
+        const changed = await repo.updateDriverDetails(client, tripId, driverId, { ...details, location });
+        const version = changed ? await applyRosterChange(client, trip) : trip.version;
+        return appliedRoster(key, 200, { mutationVersion: version });
       }
       if (driver.seat_capacity === body.seatCapacity) {
         // Successful no-op: no version bump, no invalidation.
@@ -396,7 +431,7 @@ export async function editDriver(
   });
 }
 
-export async function withdrawRequest(
+export async function editRequest(
   pool: Pool,
   tripIdRaw: string,
   requestIdRaw: string,
@@ -406,7 +441,7 @@ export async function withdrawRequest(
   const tripId = normalizeUuid(tripIdRaw);
   const rideRequestId = normalizeUuid(requestIdRaw);
   const key = normalizeUuid(requestKey);
-  const body = normalizeWithdrawRequest(rawBody);
+  const body = normalizeEditRequest(rawBody, canonicalZoneIds);
   return runKeyedMutation({
     pool,
     request: {
@@ -422,6 +457,22 @@ export async function withdrawRequest(
       if (!request) {
         throw new TerminalBusinessError(404, "NOT_FOUND", "Request not found in this trip.");
       }
+      if ("details" in body) {
+        if (!request.active) {
+          throw new TerminalBusinessError(422, "RESOURCE_INACTIVE", "Cannot edit a withdrawn passenger.");
+        }
+        const details = body.details;
+        const zone = "zoneId" in details;
+        requireTripMode(trip, zone ? "zone" : "address");
+        const location = !zone && details.pickupSelectionToken !== undefined
+          ? await verifyAttachment(client, details.pickupSelectionToken, {
+              purpose: "pickup", tripId, provider: tripProvider(trip),
+            })
+          : undefined;
+        const changed = await repo.updateRequestDetails(client, tripId, rideRequestId, { ...details, location });
+        const version = changed ? await applyRosterChange(client, trip) : trip.version;
+        return appliedRoster(key, 200, { mutationVersion: version });
+      }
       if (!request.active) {
         // Repeat withdrawal is a no-op.
         return appliedRoster(key, 200, { mutationVersion: trip.version });
@@ -429,6 +480,32 @@ export async function withdrawRequest(
       await repo.withdrawRequestRow(client, tripId, rideRequestId);
       const version = await applyRosterChange(client, trip);
       return appliedRoster(key, 200, { mutationVersion: version });
+    },
+    makeRequestId: requestId,
+  });
+}
+
+export { editRequest as withdrawRequest };
+
+export function clearPlan(pool: Pool, tripIdRaw: string, requestKey: string, rawBody: unknown): Promise<MutationResponse> {
+  const tripId = normalizeUuid(tripIdRaw);
+  const key = normalizeUuid(requestKey);
+  const body = normalizeClearPlan(rawBody);
+  return runKeyedMutation({
+    pool,
+    request: {
+      requestKey: key,
+      method: "POST",
+      canonicalRoute: `/api/trips/${tripId}/match/clear`,
+      normalizedBody: body,
+    },
+    lockTrip: client => lockTripOr404(client, tripId),
+    work: async ({ client, locked: trip }) => {
+      requireBaseVersion(trip, body.baseVersion);
+      const mutationVersion = trip.status === "assigned"
+        ? await repo.invalidatePlanAndBump(client, trip.id)
+        : trip.version;
+      return appliedRoster(key, 200, { mutationVersion });
     },
     makeRequestId: requestId,
   });
@@ -468,8 +545,8 @@ function requireTripMode(trip: repo.TripRow, mode: "zone" | "address"): void {
  * is a terminal 404 raised here; because it is raised in the lockTrip phase,
  * before the savepoint, the helper still finalizes it as a not_applied receipt.
  */
-async function lockTripOr404(client: PoolClient, tripId: string): Promise<repo.TripRow> {
-  const trip = await repo.lockTrip(client, tripId);
+async function lockTripOr404(client: PoolClient, tripId: string, byInvite = false): Promise<repo.TripRow> {
+  const trip = await repo.lockTrip(client, tripId, byInvite);
   if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
   return trip;
 }

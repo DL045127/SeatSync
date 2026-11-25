@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { DepartureFields } from "./trips/DepartureFields.tsx";
 import type { PendingOperation } from "./trips/reducer.ts";
 import { normalizeCreateTrip, type NormalizedCreateTrip } from "../contracts/index.ts";
 import { LocationPicker, type Selection } from "./locations/LocationPicker.tsx";
@@ -22,7 +23,6 @@ export default function Home() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [destinationLabel, setDestinationLabel] = useState("");
-  const [departAt, setDepartAt] = useState("");
   // Zone trips are the default and unchanged. An address trip carries a venue
   // chosen from search; its signed selection token is the only venue input.
   const [mode, setMode] = useState<"zone" | "address">("zone");
@@ -95,7 +95,7 @@ export default function Home() {
     }
   }
 
-  async function create(e: React.FormEvent) {
+  async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (storageBlocked) {
       setError("Session storage is unavailable; creation is blocked.");
@@ -113,6 +113,9 @@ export default function Home() {
       }
       return;
     }
+    const departAt = new FormData(e.currentTarget).get("departAt");
+    if (typeof departAt !== "string" || !departAt) return;
+
     // ISSUE-022: run the SHARED create-trip normalizer before claiming the slot
     // so an impossible date (2026-02-30), an over-length label, or any other
     // contract violation is caught here — the same rules the server applies —
@@ -136,8 +139,8 @@ export default function Home() {
     } catch {
       setError(
         mode === "address"
-          ? "Enter a valid name and ISO 8601 departure (with offset)."
-          : "Enter a valid name, destination, and ISO 8601 departure (with offset).",
+          ? "Check the trip name and departure."
+          : "Check the trip name, destination, and departure.",
       );
       return;
     }
@@ -168,80 +171,88 @@ export default function Home() {
   }
 
   return (
-    <main>
-      <h1>GroupRide</h1>
-      <p>Create a carpool trip for an organization event.</p>
-      {storageBlocked ? <p role="alert">Session storage unavailable: creation is blocked.</p> : null}
+    <main className="page create-page" id="main-content" tabIndex={-1}>
+      <div className="create-content">
+        <header className="page-heading">
+          <h1>Create a trip</h1>
+          <p>Set the destination and departure time. You’ll add drivers and passengers once the trip is created.</p>
+        </header>
+        {storageBlocked ? <p role="alert">Session storage unavailable: creation is blocked.</p> : null}
 
-      {pending ? (
-        <section>
-          <p role="status">An unresolved creation exists in this tab. Retry it with its original key.</p>
-          <button onClick={() => void send(pending)} disabled={busy}>Retry creation</button>
-        </section>
-      ) : null}
+        {pending ? (
+          <section className="notice">
+            <p role="status">An unresolved creation exists in this tab. Retry it with its original key.</p>
+            <button onClick={() => void send(pending)} disabled={busy}>Retry creation</button>
+          </section>
+        ) : null}
 
-      {slotOwnedByTrip ? (
-        <section>
-          <p role="status">
-            Another operation is unresolved in this tab. Resolve it before creating a new trip.
-          </p>
-          <a href={`/trips/${slotOwnedByTrip}`}>Go to the pending trip</a>
-        </section>
-      ) : null}
+        {slotOwnedByTrip ? (
+          <section className="notice">
+            <p role="status">
+              Another operation is unresolved in this tab. Resolve it before creating a new trip.
+            </p>
+            <a href={`/trips/${slotOwnedByTrip}`}>Go to the pending trip</a>
+          </section>
+        ) : null}
 
-      <form onSubmit={create}>
-        <label>
-          Trip name
-          <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
-        </label>
-        <label>
-          Trip type
-          <select
-            value={mode}
-            onChange={(e) => {
-              setMode(e.target.value === "address" ? "address" : "zone");
-              // Leaving or entering address mode discards the venue: the field is
-              // rebuilt blank, so the parent must not keep a token for it (ISSUE-056).
-              setVenue(null);
-              setPickerReset((n) => n + 1);
-            }}
-            disabled={busy}
-          >
-            <option value="zone">Zones</option>
-            <option value="address">Addresses</option>
-          </select>
-        </label>
-        {mode === "zone" ? (
+        <form className="card create-form" onSubmit={create}>
+          <h2>Trip details</h2>
           <label>
-            Destination
-            <input
-              value={destinationLabel}
-              onChange={(e) => setDestinationLabel(e.target.value)}
-              required
-              maxLength={120}
-            />
+            Trip name
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Saturday volunteer day" required maxLength={80} />
           </label>
-        ) : (
-          <LocationPicker
-            label="Venue"
-            purpose="venue"
-            disabled={busy}
-            onSelect={setVenue}
-            resetSignal={pickerReset}
-          />
-        )}
-        <label>
-          Departure (ISO 8601 with offset, e.g. 2026-03-01T09:30:00+00:00)
-          <input value={departAt} onChange={(e) => setDepartAt(e.target.value)} required />
-        </label>
-        <button
-          type="submit"
-          disabled={busy || storageBlocked || !!pending || !!slotOwnedByTrip || (mode === "address" && !venue)}
-        >
-          {busy ? "Creating…" : "Create trip"}
-        </button>
-      </form>
-      {error ? <p role="alert">{error}</p> : null}
+          <label>
+            Trip type
+            <select
+              value={mode}
+              aria-describedby="trip-type-hint"
+              onChange={(e) => {
+                setMode(e.target.value === "address" ? "address" : "zone");
+                // Leaving or entering address mode discards the venue: the field is
+                // rebuilt blank, so the parent must not keep a token for it (ISSUE-056).
+                setVenue(null);
+                setPickerReset((n) => n + 1);
+              }}
+              disabled={busy}
+            >
+              <option value="zone">Zones</option>
+              <option value="address">Addresses</option>
+            </select>
+          </label>
+          <p id="trip-type-hint" className="field-hint">
+            {mode === "zone" ? "Use shared pickup zones for drivers and passengers." : "Search for a venue and use street addresses for pickups."}
+          </p>
+          {mode === "zone" ? (
+            <label>
+              Destination
+              <input
+                value={destinationLabel}
+                onChange={(e) => setDestinationLabel(e.target.value)}
+                placeholder="e.g. Riverside Park"
+                required
+                maxLength={120}
+              />
+            </label>
+          ) : (
+            <LocationPicker
+              label="Venue"
+              purpose="venue"
+              disabled={busy}
+              onSelect={setVenue}
+              resetSignal={pickerReset}
+            />
+          )}
+          <DepartureFields />
+          {error ? <p role="alert">{error}</p> : null}
+          <button
+            type="submit"
+            disabled={busy || storageBlocked || !!pending || !!slotOwnedByTrip || (mode === "address" && !venue)}
+          >
+            {busy ? "Creating…" : "Create trip"} <span aria-hidden="true">→</span>
+          </button>
+        </form>
+      </div>
+      <div className="trip-hero" aria-hidden="true" />
     </main>
   );
 }

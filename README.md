@@ -54,6 +54,12 @@ To open the app against your demo database, run `npm start` after building or us
 
 `npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it and wait for reset to finish before restarting. A startup read overlapping reset may briefly report `DATASET_MISMATCH` (ISSUE-004). `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
 
+### Share a trip invitation
+
+Run `npm run db:migrate` to add invitations to an existing local database. On the trip dashboard select **Copy invite link** and share that link with participants. Guests open it, choose **Passenger** or **Driver**, and submit their details. A driver also enters available seats and, for an address trip, a detour limit. Refresh the organizer dashboard to see new registrations.
+
+Keep the organizer dashboard URL private. The invite link shows trip details and accepts registrations from anyone holding it. The local server URL is reachable only on the host machine. To share across devices, serve GroupRide at a reachable HTTPS origin, configure `GROUPRIDE_TRUSTED_ORIGINS` for that origin, and open the organizer dashboard at that address before copying its invite link. The existing [trip data privacy issue](WORKPLAN.md#bugs-and-open-issues) remains relevant before using personal pickup data.
+
 ### Address trips with the offline fixture (checkpoint A, verified)
 
 Address trips let an organizer search for a venue, driver start addresses and passenger pickup addresses, then preview, save and reload a plan whose costs are estimated extra driving time. This checkpoint runs entirely offline against a shipped catalog of **fictional** places and driving times ([data/fixture-places.json](data/fixture-places.json)): no account, API key, network or geocoder. Checkpoint C exercises the routing adapter on loopback. The live provider pilot belongs to D.
@@ -100,12 +106,15 @@ npm run demo
 
 `npm run demo` resets the demo database, prints a fresh starter trip ID, and starts the production server on `http://127.0.0.1:3000`. The WF-4 directional-cost walk-through:
 
-1. Open `http://127.0.0.1:3000` and create a trip (any name/destination; departure as ISO 8601 with an offset, e.g. `2026-03-01T09:30:00+00:00`). You land on `/trips/<id>`.
-2. Under **Register**, add a driver in zone `north` with 1 seat, then a passenger in zone `east`.
-3. Click **Preview**. The current page shows the preview version. The fixture’s expected result is 1 match at cost 7, visible in the status line after saving.
-4. Click **Save plan (commit)**. The status line shows `assigned`, `Matched: 1`, `Total cost: 7`.
-5. Reload the page: the saved plan persists.
-6. Click **Reduce capacity** or **Cancel** on the driver: the plan clears and the status becomes `needs_rematch`. Preview and save again to rematch.
+1. Open `http://127.0.0.1:3000` and create a trip with a name and destination. Under **Departure**, choose a date, time, and time zone. The form converts your selection to UTC. You land on `/trips/<id>`.
+2. Under **Register participants**, add a driver in zone `north` with 1 seat, then a passenger in zone `east`.
+3. Click **Preview** to review the passenger rows under each driver’s name. Unassigned passengers appear below the cards. Use **Discard preview** to dismiss the preview. The fixture’s expected result is 1 match at cost 7, visible in the status line after saving.
+4. Click **Save plan**. The status line shows `Plan saved`, `Matched: 1`, `Total cost: 7`.
+5. Reload the page to see the saved plan again. To remove its assignments and keep the roster, use **Clear plan** in the saved plan section and confirm.
+6. Click **Edit driver** or **Edit passenger** next to a participant to update the registration. In address mode, use **Change address** to select a replacement. Changes clear the saved plan so you can preview and save a new one.
+7. Under **Edit driver**, change **Seats available** from 1 to 0 and save. The status becomes **Needs a new plan**. Preview and save again to rematch.
+
+**Cancel** and **Withdraw** remove inactive participants from the dashboard roster. Their registrations remain in the database and are excluded from matching.
 
 To rehearse the three automated workflow scenarios against this running demo, run `npm run test:demo` in a second terminal. Chromium creates trips in the local demo database on port 3000 and exercises save/reload, rematch, and stale save. Stop the demo server when finished.
 

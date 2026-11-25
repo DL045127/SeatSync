@@ -121,16 +121,34 @@ const addressAddRequestSchema = z
   })
   .strict();
 
+const driverDetailsSchema = z.union([
+  zoneAddDriverSchema,
+  addressAddDriverSchema.partial({ startSelectionToken: true }),
+]);
+const passengerDetailsSchema = z.union([
+  zoneAddRequestSchema,
+  addressAddRequestSchema.partial({ pickupSelectionToken: true }),
+]);
 const editDriverSchema = z.union([
   z.object({ baseVersion: versionInt, seatCapacity: seatInt }).strict(),
   z.object({ baseVersion: versionInt, active: z.literal(false) }).strict(),
+  z.object({ baseVersion: versionInt, details: driverDetailsSchema }).strict(),
 ]);
 
 const withdrawRequestSchema = z
   .object({ baseVersion: versionInt, active: z.literal(false) })
   .strict();
+const editRequestSchema = z.union([
+  withdrawRequestSchema,
+  z.object({ baseVersion: versionInt, details: passengerDetailsSchema }).strict(),
+]);
 
 const commitSchema = z.object({ previewId: canonicalUuid }).strict();
+const clearPlanSchema = z.object({ baseVersion: versionInt }).strict();
+
+export function normalizeClearPlan(raw: unknown): { baseVersion: number } {
+  return clearPlanSchema.parse(raw);
+}
 
 export interface NormalizedZoneCreateTrip {
   name: string;
@@ -269,7 +287,8 @@ export function normalizeAddRequest(
 
 export type NormalizedEditDriver =
   | { baseVersion: number; seatCapacity: number }
-  | { baseVersion: number; active: false };
+  | { baseVersion: number; active: false }
+  | { baseVersion: number; details: z.infer<typeof driverDetailsSchema> };
 
 /**
  * Parse and normalize a driver edit/cancel body. `baseVersion` is validated as
@@ -277,7 +296,7 @@ export type NormalizedEditDriver =
  * edit is validated as a 0..8 integer. A fractional or out-of-range value is
  * rejected rather than silently accepted.
  */
-export function normalizeEditDriver(raw: unknown): NormalizedEditDriver {
+export function normalizeEditDriver(raw: unknown, knownZoneIds: ReadonlySet<string> = new Set()): NormalizedEditDriver {
   const parsed = editDriverSchema.parse(raw);
   const baseVersion = normalizeInteger(
     parsed.baseVersion,
@@ -294,7 +313,30 @@ export function normalizeEditDriver(raw: unknown): NormalizedEditDriver {
       ),
     };
   }
+  if ("details" in parsed) {
+    return { baseVersion, details: normalizeParticipantDetails(parsed.details, knownZoneIds) };
+  }
   return { baseVersion, active: false };
+}
+
+function normalizeParticipantDetails<T extends { name: string; zoneId?: string }>(
+  details: T, knownZoneIds: ReadonlySet<string>,
+): T {
+  const name = normalizeLabel(details.name, LIMITS.participantNameCodePoints);
+  return {
+    ...details,
+    name,
+    ...(details.zoneId !== undefined
+      ? { zoneId: normalizeZoneId(details.zoneId, knownZoneIds) }
+      : {}),
+  };
+}
+
+export function normalizeEditRequest(raw: unknown, knownZoneIds: ReadonlySet<string>) {
+  const parsed = editRequestSchema.parse(raw);
+  return "details" in parsed
+    ? { baseVersion: parsed.baseVersion, details: normalizeParticipantDetails(parsed.details, knownZoneIds) }
+    : normalizeWithdrawRequest(parsed);
 }
 
 export interface NormalizedWithdrawRequest {

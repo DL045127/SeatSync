@@ -4,24 +4,127 @@
 // trip, so tests do not interfere.
 
 import { expect, test, type Page } from "@playwright/test";
+import { fillDeparture } from "./departure.ts";
 
 /** Create a trip from the home page and land on its trip page. */
 async function createTrip(page: Page, name: string): Promise<string> {
   await page.goto("/");
   await page.getByLabel("Trip name").fill(name);
   await page.getByLabel("Destination").fill("Student Union");
-  await page.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
+  await fillDeparture(page, "2026-03-01", "09:30");
   await page.getByRole("button", { name: "Create trip" }).click();
   await page.waitForURL(/\/trips\/[0-9a-f-]+$/);
   const url = page.url();
   return url.slice(url.lastIndexOf("/") + 1);
 }
 
+test("a newly created trip replaces the loading screen after its initial read", async ({ page }) => {
+  let reads = 0;
+  await page.route(/\/api\/trips\/[0-9a-f-]+$/, route => {
+    if (route.request().method() === "GET") reads += 1;
+    return route.continue();
+  });
+  await createTrip(page, "New dashboard");
+  await expect(page.getByRole("heading", { name: "New dashboard" })).toBeVisible();
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", "0");
+  await expect(page.getByText("Loading current trip…")).toHaveCount(0);
+  expect(reads).toBe(1);
+});
+
+test("discard a preview, clear a saved plan, and protect a replacement plan from stale clears", async ({ page }) => {
+  const tripId = await createTrip(page, "Clear assignments");
+  await addDriver(page, "Dana", "north", 1);
+  await addPassenger(page, "Alex", "east");
+  const preview = page.getByRole("button", { name: "Preview", exact: true });
+  const save = page.getByRole("button", { name: "Save plan" });
+  const saved = page.getByTestId("saved-assignments");
+  await preview.click();
+  await expect(page.getByText("Preview ready to review.")).toBeVisible();
+  await page.getByRole("button", { name: "Discard preview" }).click();
+  await expect(save).toBeDisabled();
+  await expect(page.getByTestId("preview-ready")).toHaveCount(0);
+
+  await preview.click();
+  await save.click();
+  await expect(saved.getByRole("article", { name: "Dana" })).toContainText("Alex");
+  const clear = page.getByRole("button", { name: "Clear plan" });
+  page.once("dialog", dialog => void dialog.dismiss());
+  await clear.click();
+  await expect(saved.getByRole("article", { name: "Dana" })).toContainText("Alex");
+
+  const route = `/api/trips/${tripId}/match/clear`;
+  const request = page.waitForRequest(req => req.url().endsWith(route) && req.method() === "POST");
+  page.once("dialog", dialog => void dialog.accept());
+  await clear.click();
+  const original = await request;
+  await expect(page.getByTestId("trip-status")).toContainText("Needs a new plan");
+  await expect(saved).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("trip-status")).toContainText("Needs a new plan");
+  await expect(saved).toHaveCount(0);
+  await expect(page.getByText(/Dana \(north\) seats 1/)).toBeVisible();
+  await expect(page.getByText(/Alex \(east\)/)).toBeVisible();
+
+  await preview.click();
+  await save.click();
+  await expect(saved.getByRole("article", { name: "Dana" })).toContainText("Alex");
+  const data = original.postDataJSON();
+  const key = original.headers()["idempotency-key"];
+  const replay = await page.request.post(route, { headers: { "idempotency-key": key }, data });
+  expect(replay.status()).toBe(200);
+  expect(await replay.json()).toMatchObject({ operation: { key, outcome: "applied" } });
+  const stale = await page.request.post(route, { headers: { "idempotency-key": crypto.randomUUID() }, data });
+  expect(stale.status()).toBe(409);
+  expect(await stale.json()).toMatchObject({ error: { code: "STALE_VERSION" } });
+  await page.reload();
+  await expect(saved.getByRole("article", { name: "Dana" })).toContainText("Alex");
+});
+
+test("edit zone participants in place and invalidate the saved plan only when details change", async ({ page }) => {
+  const tripId = await createTrip(page, "Edit zone participants");
+  await addDriver(page, "Dana", "north", 1);
+  await addPassenger(page, "Alex", "east");
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await page.getByRole("button", { name: "Save plan" }).click();
+  const saved = page.getByTestId("saved-assignments");
+  await expect(saved.getByRole("article", { name: "Dana" })).toContainText("Alex");
+  const before = await version(page);
+  const driver = page.getByRole("form", { name: "Edit driver details" });
+  await page.getByRole("button", { name: "Edit driver Dana" }).click();
+  await driver.getByRole("button", { name: "Save changes" }).click();
+  await expect(driver).toHaveCount(0);
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before));
+  await expect(saved.getByRole("article", { name: "Dana" })).toContainText("Alex");
+
+  await page.getByRole("button", { name: "Edit driver Dana" }).click();
+  await driver.getByLabel("Name").fill("Dani");
+  await driver.getByRole("combobox", { name: "Pickup zone" }).selectOption("west");
+  await driver.getByLabel("Seats available").fill("2");
+  await driver.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Dani \(west\) seats 2/)).toBeVisible();
+  await expect(saved).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Edit passenger Alex" }).click();
+  const passenger = page.getByRole("form", { name: "Edit passenger details" });
+  await passenger.getByLabel("Name").fill("Avery");
+  await passenger.getByRole("combobox", { name: "Pickup zone" }).selectOption("south");
+  await passenger.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Avery \(south\)/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(/Dani \(west\) seats 2/)).toBeVisible();
+  await expect(page.getByText(/Avery \(south\)/)).toBeVisible();
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before + 2));
+  const response = await page.request.get(`/api/trips/${tripId}`);
+  const roster = await response.json();
+  expect(roster.drivers).toHaveLength(1);
+  expect(roster.requests).toHaveLength(1);
+  expect(roster.assignments).toEqual([]);
+});
+
 /** Current trip version parsed from the status line. */
 async function version(page: Page): Promise<number> {
-  const text = (await page.getByTestId("trip-status").textContent()) ?? "";
-  const m = /Version:\s*(\d+)/.exec(text);
-  return m ? Number(m[1]) : -1;
+  const value = await page.getByTestId("trip-status").getAttribute("data-version");
+  return value === null ? -1 : Number(value);
 }
 
 async function addDriver(page: Page, name: string, zone: string, seats: number): Promise<void> {
@@ -31,7 +134,7 @@ async function addDriver(page: Page, name: string, zone: string, seats: number):
   await page.getByLabel("driver seats").fill(String(seats));
   await page.getByTestId("driver-form").getByRole("button", { name: "Add driver" }).click();
   // Wait until the registration lands (version advances and no pending op).
-  await expect(page.getByTestId("trip-status")).toContainText(`Version: ${before + 1}`);
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before + 1));
   await expect(page.getByText(/Pending operation/)).toHaveCount(0);
 }
 
@@ -40,9 +143,60 @@ async function addPassenger(page: Page, name: string, zone: string): Promise<voi
   await page.getByLabel("passenger name").fill(name);
   await page.getByLabel("passenger zone").selectOption(zone);
   await page.getByTestId("passenger-form").getByRole("button", { name: "Add passenger" }).click();
-  await expect(page.getByTestId("trip-status")).toContainText(`Version: ${before + 1}`);
+  await expect(page.getByTestId("trip-status")).toHaveAttribute("data-version", String(before + 1));
   await expect(page.getByText(/Pending operation/)).toHaveCount(0);
 }
+
+test("preview and saved plans group passenger rows by driver", async ({ page }) => {
+  await createTrip(page, "Driver cards");
+  await addDriver(page, "Dana", "north", 2);
+  await addDriver(page, "Eli", "north", 1);
+  await addDriver(page, "Sam", "north", 0);
+  const passengerNames = ["Alex", "Brooke", "Casey", "Jo" + "n".repeat(65)];
+  for (const name of passengerNames) await addPassenger(page, name, "north");
+  const drivers = page.getByRole("region", { name: "Drivers", exact: true });
+  const passengers = page.getByRole("region", { name: "Passengers", exact: true });
+  const driverStyles = await drivers.locator(".roster-row").first().evaluate(row => ({
+    height: row.getBoundingClientRect().height,
+    color: getComputedStyle(row).backgroundColor,
+  }));
+  const passengerStyles = await passengers.locator(".roster-row").first().evaluate(row => ({
+    height: row.getBoundingClientRect().height,
+    color: getComputedStyle(row).backgroundColor,
+  }));
+  expect(driverStyles.height).toBeLessThan(54);
+  expect(passengerStyles.height).toBeLessThan(54);
+  expect(driverStyles.color).not.toBe(passengerStyles.color);
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  const preview = page.getByTestId("preview-assignments");
+  const saved = page.getByTestId("saved-assignments");
+  for (const plan of [preview, saved]) {
+    if (plan === saved) await page.getByRole("button", { name: "Save plan" }).click();
+    await expect(plan.getByRole("article")).toHaveCount(3);
+    await expect(plan.getByRole("article", { name: "Dana" }).getByRole("listitem")).toHaveCount(2);
+    await expect(plan.getByRole("article", { name: "Eli" }).getByRole("listitem")).toHaveCount(1);
+    await expect(plan.getByRole("article", { name: "Sam" })).toContainText("No passengers assigned.");
+  }
+  const rows = await saved.getByRole("listitem").allTextContents();
+  const names = rows.map(row => row.split("cost")[0].trim());
+  expect(new Set(names).size).toBe(3);
+  const unassigned = passengerNames.find(name => !names.includes(name));
+  expect(unassigned).toBeDefined();
+  await expect(page.getByTestId("saved-unassigned")).toHaveText(`Unassigned: ${unassigned}`);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(saved.getByRole("listitem")).toHaveText(rows);
+  const boxes = await saved.getByRole("article").evaluateAll(cards => cards.map(card => {
+    const { left, top, right } = card.getBoundingClientRect();
+    return { left, top, right };
+  }));
+  expect(boxes[0].left).toBe(boxes[1].left);
+  expect(boxes[0].top).toBeLessThan(boxes[1].top);
+  expect(boxes.every(box => box.right <= 390)).toBe(true);
+  await expect(passengers.getByRole("button", { name: `Edit passenger ${passengerNames[3]}` })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
 
 test("WF-1 / WF-4: create → register → preview → save → reload shows 1 match at cost 7", async ({ page }) => {
   await createTrip(page, "WF Browser Trip");
@@ -55,20 +209,22 @@ test("WF-1 / WF-4: create → register → preview → save → reload shows 1 m
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByTestId("preview-ready")).toBeVisible();
   // ISSUE-024: the visible preview shows the named pairing and cost BEFORE save.
-  await expect(page.getByTestId("preview-assignments")).toContainText("Pat → Dana (cost 7)");
+  await expect(page.getByTestId("preview-assignments").getByRole("article", { name: "Dana" }).getByRole("listitem"))
+    .toHaveText(/Pat.*cost 7/);
   await expect(page.getByTestId("preview-unassigned")).toContainText("none");
 
-  await page.getByRole("button", { name: "Save plan (commit)" }).click();
+  await page.getByRole("button", { name: "Save plan" }).click();
   // After commit + refresh, the trip is assigned with 1 match at total cost 7.
-  await expect(page.getByTestId("trip-status")).toContainText("Status: assigned");
+  await expect(page.getByTestId("trip-status")).toContainText("Plan saved");
   await expect(page.getByTestId("trip-status")).toContainText("Matched: 1");
   await expect(page.getByTestId("trip-status")).toContainText("Total cost: 7");
 
   // Reload: the saved plan persists, with the named pairing visible (ISSUE-024).
   await page.reload();
-  await expect(page.getByTestId("trip-status")).toContainText("Status: assigned");
+  await expect(page.getByTestId("trip-status")).toContainText("Plan saved");
   await expect(page.getByTestId("trip-status")).toContainText("Total cost: 7");
-  await expect(page.getByTestId("saved-assignments")).toContainText("Pat → Dana (cost 7)");
+  await expect(page.getByTestId("saved-assignments").getByRole("article", { name: "Dana" }).getByRole("listitem"))
+    .toHaveText(/Pat.*cost 7/);
 });
 
 test("ISSUE-021: blocked storage sends zero creation requests; a lost creation retries to one trip", async ({ browser }) => {
@@ -95,7 +251,7 @@ test("ISSUE-021: blocked storage sends zero creation requests; a lost creation r
     await blockedPage.goto("/");
     await blockedPage.getByLabel("Trip name").fill("Blocked Trip");
     await blockedPage.getByLabel("Destination").fill("Union");
-    await blockedPage.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
+    await fillDeparture(blockedPage, "2026-03-01", "09:30");
     // The submit button is disabled under blocked storage; force the handler
     // and confirm no request was transmitted.
     await expect(blockedPage.getByRole("button", { name: /Create trip/ })).toBeDisabled();
@@ -136,7 +292,7 @@ test("ISSUE-021: blocked storage sends zero creation requests; a lost creation r
     await page.goto("/");
     await page.getByLabel("Trip name").fill("Lost Create");
     await page.getByLabel("Destination").fill("Union");
-    await page.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
+    await fillDeparture(page, "2026-03-01", "09:30");
     await page.getByRole("button", { name: "Create trip" }).click();
     // The pending banner also appears before the POST completes. Wait for the
     // simulated 503 to reach the browser before inspecting the committed id.
@@ -192,7 +348,7 @@ test("ISSUE-021: creation is blocked when another operation already owns the tab
     await page.reload();
     await page.getByLabel("Trip name").fill("Should Not Create");
     await page.getByLabel("Destination").fill("Union");
-    await page.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
+    await fillDeparture(page, "2026-03-01", "09:30");
     // The create button is disabled while the slot is owned by another op.
     await expect(page.getByRole("button", { name: /Create trip/ })).toBeDisabled();
     await expect(page.getByText(/Another operation is unresolved/i)).toBeVisible();
@@ -286,51 +442,56 @@ test("ISSUE-022: an over-length passenger name is rejected locally with zero POS
   expect(posts).toBe(1);
 });
 
-test("ISSUE-022: an impossible departure date is rejected on the create form with zero POSTs", async ({ page }) => {
-  let posts = 0;
+test("departure handles daylight-saving gaps and sends the selected UTC instant", async ({ page }) => {
+  const departures: string[] = [];
   await page.route("**/api/trips", (route) => {
-    posts += 1;
+    departures.push(route.request().postDataJSON().departAt);
     return route.continue();
   });
   await page.goto("/");
-  await page.getByLabel("Trip name").fill("Bad Date Trip");
+  await page.getByLabel("Trip name").fill("Clock change trip");
   await page.getByLabel("Destination").fill("Union");
-  // Feb 30 does not exist; the shared normalizer rejects it locally.
-  await page.getByLabel(/Departure/).fill("2026-02-30T09:30:00Z");
-  await page.getByRole("button", { name: "Create trip" }).click();
-  await expect(page.getByText(/valid name, destination, and ISO 8601 departure/i)).toBeVisible();
-  expect(posts).toBe(0);
-  // Nothing was persisted, so no pending creation stranding the tab.
-  const stored = await page.evaluate(() => sessionStorage.getItem("groupride.pending.v1"));
-  expect(stored).toBeNull();
 
-  // A corrected date creates the trip.
-  await page.getByLabel(/Departure/).fill("2026-03-01T09:30:00+00:00");
+  await fillDeparture(page, "2026-03-08", "02:30", "America/Chicago");
+  await expect(page.getByRole("group", { name: "Departure" }).getByRole("alert")).toContainText("unavailable in the selected time zone");
+  await page.getByRole("button", { name: "Create trip" }).click();
+  expect(departures).toEqual([]);
+  expect(await page.evaluate(() => sessionStorage.getItem("groupride.pending.v1"))).toBeNull();
+
+  await fillDeparture(page, "2026-11-01", "01:30", "America/Chicago");
+  const occurrence = page.getByRole("combobox", { name: /This time occurs twice/ });
+  await expect(occurrence.getByRole("option")).toHaveCount(3);
+  await page.getByRole("button", { name: "Create trip" }).click();
+  expect(departures).toEqual([]);
+  await occurrence.selectOption("2026-11-01T07:30:00.000Z");
   await page.getByRole("button", { name: "Create trip" }).click();
   await page.waitForURL(/\/trips\/[0-9a-f-]+$/);
-  expect(posts).toBe(1);
+  expect(departures).toEqual(["2026-11-01T07:30:00.000Z"]);
+  await expect(page.locator("time")).toHaveAttribute("datetime", "2026-11-01T07:30:00.000Z");
 });
 
-test("WF-2: cancel/reduce capacity clears the plan; rematch saves a valid replacement", async ({ page }) => {
+test("WF-2: editing available seats clears the plan and rematch saves a valid replacement", async ({ page }) => {
   await createTrip(page, "Rematch Trip");
   await addDriver(page, "Drew", "north", 2);
   await addPassenger(page, "Ira", "north");
   await addPassenger(page, "Jo", "north");
 
   await page.getByRole("button", { name: "Preview" }).click();
-  await page.getByRole("button", { name: "Save plan (commit)" }).click();
-  await expect(page.getByTestId("trip-status")).toContainText("Status: assigned");
+  await page.getByRole("button", { name: "Save plan" }).click();
+  await expect(page.getByTestId("trip-status")).toContainText("Plan saved");
   await expect(page.getByTestId("trip-status")).toContainText("Matched: 2");
 
-  // Reduce capacity: the authoritative plan is cleared (needs_rematch).
-  await page.getByRole("button", { name: "Reduce capacity" }).first().click();
-  await expect(page.getByTestId("trip-status")).toContainText("Status: needs_rematch");
+  await page.getByRole("button", { name: "Edit driver Drew" }).click();
+  const edit = page.getByRole("form", { name: "Edit driver details" });
+  await edit.getByLabel("Seats available").fill("1");
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByTestId("trip-status")).toContainText("Needs a new plan");
   await expect(page.getByTestId("trip-status")).toContainText("Matched: 0");
 
   // Manual rematch respects the reduced capacity (one seat -> one match).
   await page.getByRole("button", { name: "Preview" }).click();
-  await page.getByRole("button", { name: "Save plan (commit)" }).click();
-  await expect(page.getByTestId("trip-status")).toContainText("Status: assigned");
+  await page.getByRole("button", { name: "Save plan" }).click();
+  await expect(page.getByTestId("trip-status")).toContainText("Plan saved");
   await expect(page.getByTestId("trip-status")).toContainText("Matched: 1");
 
   // ISSUE-024 evidence: assert the ACTUAL unmatched rider by name. Exactly one
@@ -358,26 +519,47 @@ test("WF-3: two sessions, stale commit gives a review/refresh flow without silen
 
     // Both sessions open the same trip and preview the same version.
     await pageB.goto(`/trips/${tripId}`);
-    await expect(pageB.getByTestId("trip-status")).toContainText("Version: 2");
+    await expect(pageB.getByTestId("trip-status")).toHaveAttribute("data-version", "2");
     await pageA.getByRole("button", { name: "Preview" }).click();
     await expect(pageA.getByTestId("preview-ready")).toBeVisible();
     await pageB.getByRole("button", { name: "Preview" }).click();
     await expect(pageB.getByTestId("preview-ready")).toBeVisible();
 
     // Session A commits successfully.
-    await pageA.getByRole("button", { name: "Save plan (commit)" }).click();
-    await expect(pageA.getByTestId("trip-status")).toContainText("Status: assigned");
+    await pageA.getByRole("button", { name: "Save plan" }).click();
+    await expect(pageA.getByTestId("trip-status")).toContainText("Plan saved");
 
     // Session B's commit is now stale: it must be rejected with a review prompt,
     // not silently overwrite A's plan.
-    await pageB.getByRole("button", { name: "Save plan (commit)" }).click();
+    await pageB.getByRole("button", { name: "Save plan" }).click();
     await expect(pageB.getByText("The trip changed. Review the refreshed state and resubmit.")).toBeVisible();
     // B's preview was cleared and Commit is disabled until it reviews anew.
-    await expect(pageB.getByRole("button", { name: "Save plan (commit)" })).toBeDisabled();
+    await expect(pageB.getByRole("button", { name: "Save plan" })).toBeDisabled();
   } finally {
     await contextA.close();
     await contextB.close();
   }
+});
+
+test("inactive drivers and passengers disappear from the dashboard and stay hidden after reload", async ({ page }) => {
+  const tripId = await createTrip(page, "Active roster");
+  await addDriver(page, "Dana", "north", 1);
+  await addPassenger(page, "Alex", "east");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByText("No active drivers.")).toBeVisible();
+  await expect(page.getByText(/Dana \(north\)/)).toHaveCount(0);
+  await expect(page.getByText(/Alex \(east\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Withdraw" }).click();
+  await expect(page.getByText("No active passengers.")).toBeVisible();
+  await expect(page.getByText(/Alex \(east\)/)).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText("No active drivers.")).toBeVisible();
+  await expect(page.getByText("No active passengers.")).toBeVisible();
+  const response = await page.request.get(`/api/trips/${tripId}`);
+  expect(await response.json()).toMatchObject({
+    drivers: [{ name: "Dana", active: false }],
+    requests: [{ name: "Alex", active: false }],
+  });
 });
 
 test("U-02: reload replays the exact registration receipt after a withdrawal", async ({ page }) => {
@@ -434,7 +616,8 @@ test("U-02: reload replays the exact registration receipt after a withdrawal", a
   expect(await replay.json()).toEqual(originalReceipt);
   await expect(page.getByText(/Pending operation/)).toHaveCount(0);
   expect(await pendingSlot()).toBeNull();
-  await expect(page.getByText("Lee (north) — withdrawn")).toBeVisible();
+  await expect(page.getByText("No active passengers.")).toBeVisible();
+  await expect(page.getByText(/Lee \(north\)/)).toHaveCount(0);
   expect(await (await page.request.get(trip)).json()).toEqual(withdrawn);
 });
 

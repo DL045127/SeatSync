@@ -2,6 +2,92 @@
 
 **Status:** Checkpoint A of the address extension is recorded in `feat: support offline address trips (checkpoint A)`. Checkpoint B (independent projection check, leg reuse and recovery, read and commit validation) was implemented and verified on a working diff over `161df83` ([closeout](#checkpoint-b-closeout)); the [technical review](#checkpoint-b-technical-review) found five defects and the [corrections](#checkpoint-b-corrections) fix and verify them. The [correction review](#checkpoint-b-correction-review) reopened B for ISSUE-071–073, which the [second corrections](#checkpoint-b-second-corrections) fix and verify. The [independent B signoff review](#independent-b-signoff-review) verified these fixes. The [C technical review](#checkpoint-c-technical-review) reproduced two defects. The [review corrections](#checkpoint-c-review-corrections) passed their PostgreSQL and loopback regressions. The [follow-up corrections](#zero-seat-handoff-and-legacy-retry-date-corrections) cover the zero-seat handoff and legacy retry dates. The [latest C corrections](#covered-publication-race-and-malformed-cooldown-corrections) address competing covered publishers and malformed cooldown dates. The [independent C signoff review](#independent-c-signoff-review) verified these corrections. The [D pilot rehearsal](#checkpoint-d-pilot-preparation) passed on loopback. The [two-region live run](#austin-and-seattle-live-pilot) completed. The [D technical review](#checkpoint-d-technical-review) confirmed both saved plans and opened ISSUE-083–086. The [D review corrections](#checkpoint-d-review-corrections) address the original cases. The [independent correction review](#checkpoint-d-correction-review) reopened ISSUE-084 for two more wrong-building selections. The [primary street number follow-up](#primary-street-number-follow-up) corrected those cases. Its [independent review](#independent-review-of-primary-street-numbers) kept ISSUE-084 open and recorded ISSUE-087 for numeric venue names. The [independent review of grid pickups and numeric venues](#independent-review-of-grid-pickups-and-numeric-venues) verified ISSUE-087, kept ISSUE-084 open for city-qualified addresses and recorded ISSUE-088 for ambiguous venue selection. The [locality and venue ambiguity corrections](#locality-and-venue-ambiguity-corrections) address the original reproducers. The [independent review](#independent-review-of-locality-and-venue-ambiguity) identified remaining cases in ISSUE-084 and ISSUE-088. The [highway and street matching corrections](#highway-searches-and-independent-street-matching) address those cases. The [highway and street review](#independent-review-of-highway-and-street-matching) closed ISSUE-088. The [directional highway and locality corrections](#directional-highways-and-locality-without-commas) address the remaining search findings. The [independent directional-highway review](#independent-review-of-directional-highways-and-attached-localities) identified collisions involving FL and OR. The [Florida and Oregon corrections](#florida-postal-codes-and-oregon-route-numbers) cover those cases. The [general locality correction](#general-locality-matching-and-state-aliases) addresses country-suffixed and state-only searches and equivalent state representations. The [locality and unit ambiguity corrections](#locality-and-unit-ambiguity-corrections) address ISSUE-089–091 and passed [independent verification](#independent-verification-of-the-three-shared-search-rules). [Checkpoint D passed its technical gate](#checkpoint-d-technical-closeout). A-10 student inspection remains pending. The zone release and its W6 record are below and unchanged. Design and planned checks live in [ARCHITECTURE.md](ARCHITECTURE.md) and [ARCHITECTURE-v2.md](ARCHITECTURE-v2.md).
 
+## Organizer interface refresh
+
+The student asked to make GroupRide look like a production application. This episode covers the trip creation form, organizer workspace, address picker, and their responsive layout and interaction states on the working diff over `7dc163f`. Verify existing browser workflows and inspect the layout at desktop and mobile widths. Student inspection is pending.
+
+The interface adds a shared header, responsive setup and organizer pages, visible registration labels, and clearer selection, notice, and plan states. The trip header displays the saved name and departure in UTC. The road photo is an original generated asset served locally as a 168 KiB WebP. Desktop setup and phone dashboard screenshots were inspected at 1440 px and 390 px respectively. The phone regression selects a venue by touch, creates an address trip, and checks that both pages fit the viewport.
+
+The stylesheet and screen changes are on the working diff over `7dc163f`. Review blobs are `a4f585611e45` for CSS, `8398bde0be0f` for the shared layout, `14efa080bd3e` for trip creation, `d8d099c8534c` for the dashboard, `de93c2f7579c` for the picker, and `7bbd3b625edd` for the address browser test.
+
+Node 24 lint, typecheck, the production build, 461 unit tests, and all 27 Chromium workflows passed. The browser run used the designated PostgreSQL test database and the offline fixture provider. Student inspection is pending.
+
+### Local departure entry
+
+The student asked for a calendar date, ordinary time and time zone in the create-trip form, with conversion to the backend timestamp format. Verify the UTC conversion, daylight-saving transitions and existing create and retry workflows. Student inspection is pending.
+
+Trip creation sends the resolved UTC instant through the existing create-trip normalizer and pending-operation workflow. The time-zone list puts common U.S. zones and UTC first, followed by the browser’s other IANA zones. The form blocks skipped clock times and offers both UTC instants for repeated times. Source blobs are `98c3a2351528` for the form and `1bf34c244a31` for conversion.
+
+Lint, typecheck and all 469 unit tests passed. The production Chromium suite passed 26 unrelated workflows in the full run. The new clock-change case passed on a focused production rerun after scoping its alert selector to the departure form. It verifies that there is no POST in the spring gap and that selecting the second occurrence in the fall persists the expected UTC instant. The browser used the local test database and fixture provider.
+
+### Trip dashboard loading after creation
+
+The student reported that creating a trip redirected to a dashboard that stayed on its loading state. Investigate the local development load, repair the browser read sequencing, and verify the existing trip creation and recovery workflows. Student inspection is pending.
+
+The running development server reproduced the stuck dashboard on an existing local trip. Chromium recorded four successful snapshot responses and the loading message stayed visible. React replayed the mount effects in development. The effect that copied the rendered generation into the ref reset the counter between starts, so the reducer saw four starts while the requests reused the first two generations.
+
+The dashboard now allocates monotonically increasing read generations and handles the initial fetch in the mount effect. The separate refresh effect runs when a newer version invalidates the snapshot. Only the latest request can change the load error. On the same development server and saved trip, Chromium observed two successful responses, a visible dashboard, and no loading message. The check read the existing trip without writing demo data. The dashboard diff is blob `9597a4191e22` and the browser regression is `1dc4442ce9a6`.
+
+On Node 24, lint, typecheck, 469 unit tests and all 28 Chromium workflows passed. The production browser regression creates a fixture trip and verifies that its initial snapshot replaces the loading state after one GET. The production suite also covers trip registration, stale previews, lost responses and UTC departure conversion. Student inspection remains pending.
+
+### Clear a carpool plan
+
+The student requested a way to clear the current plan and asked why the preview displays a version number. Add a version-checked clear action for saved plans and allow the organizer to discard an unsaved preview. Keep the roster intact, preserve same-key recovery, and hide internal version numbers from the organizer view. Student inspection is pending.
+
+The clear action uses the existing plan invalidation transaction and keyed receipts. Its version check prevents a clear prepared for one plan from removing a replacement. Discarding a preview only dismisses it in the browser. The dashboard leaves version markers available for automated checks while the organizer sees readiness text. The service is blob `6c1b97870be9`, route `92018a38b665`, dashboard `ebbc6c76ea79`, and browser regression `c06f725ff46a`.
+
+Lint, typecheck, the production build, 71 matching tests, 469 unit tests and all 29 Chromium workflows passed. The new browser check discards a preview, dismisses and accepts the clear confirmation, reloads with the roster intact, saves a replacement, and verifies that a same-key replay and a stale new-key request leave that replacement intact. The browser used the designated PostgreSQL test database. Student inspection remains pending.
+
+### Edit registered participants
+
+The student asked to edit driver and passenger details. Add roster forms for names, zones or selected addresses, driver seats, and address driver detour limits. Use the existing version check and keyed mutations, preserve unchanged registrations, and verify plan invalidation and persistence in both location modes. Student inspection is pending.
+
+The edit forms show the current registration and ask for a signed replacement only when the organizer chooses to change an address. The service uses the existing participant PATCH routes, validates the editable fields and version, and matches a replacement token to the trip, provider, and participant role. The repository updates the original participant row. A saved plan stays in place when the submitted details match the stored details. An effective change invalidates the plan through the existing roster mutation path.
+
+Review blobs are `ae35ab6386ca` (contracts), `3c5fa6e715ca` (service), `96400a52da8c` (repository), `0dbfdf99ff66` (organizer page), `09458bdd54de` (address browser tests), and `b7d671100902` (zone browser tests).
+
+Lint, typecheck, the production build, 71 matching tests, 469 unit tests, 73 focused PostgreSQL integration tests and all 31 Chromium workflows passed. The new browser tests verify zone and address edits, address retention during a name change, roster persistence after reload, and saved-plan invalidation only on an effective change. Verification used the designated test database and fixture or loopback data. Student inspection remains pending.
+
+### Seat changes through Edit driver
+
+The student asked to remove the Reduce capacity shortcut now that Edit driver supports changing seats. Update the browser workflow and walkthrough to use the edit form. Student inspection is pending.
+
+The dashboard now uses the Edit driver form for seat changes. The workflow reduces the seat count from two to one, confirms the saved plan clears, and saves a replacement with one matched passenger. Lint, typecheck, the production build, and both focused Chromium workflows passed.
+
+### Active dashboard rosters
+
+The student asked why canceled drivers and withdrawn passengers remain visible. Inspect the source of those rows and hide inactive registrations from the organizer’s roster. Verify that the dashboard stays clear after reload and that a replay does not restore a withdrawn passenger. Student inspection is pending.
+
+The dashboard previously rendered all registrations returned by the server. Cancellation and withdrawal mark the registrations inactive in PostgreSQL. The roster now renders only active rows and shows an empty state when none are active. The snapshot API still returns inactive records for the existing read contract, and matching excludes them. Dashboard blob `ee0c43a9536f` and browser tests `cac6847532a0` passed lint, typecheck, the production build, and both focused Chromium workflows. The tests verify immediate removal from view, reload, and receipt replay.
+
+### Driver cards in carpool plans
+
+The student asked for plan cards titled by driver with passenger rows beneath. Use the same layout in the preview and saved plan, retain per-passenger costs and unassigned riders, and verify grouping and reload. Student inspection is pending.
+
+The preview and saved plan share a responsive grid of cards. Each active driver has a card with filled seats and a passenger list with individual costs. Drivers without riders show an empty card. The unassigned list remains below the cards. Review blobs are `2ed116bbdb19` for the dashboard, `cbcb3d0f437b` for styles, `12df51ef70a8` for zone workflows, and `735701b00984` for address workflows.
+
+Lint, typecheck, the production build and all 33 Chromium workflows passed on Node 24. The new browser regression verifies multiple passenger rows, individual driver groupings, an empty card, an unassigned passenger, and the same plan after reload in a 390 px viewport.
+
+### Compact color-coded participant rows
+
+The student requested compact, color-coded driver and passenger rows for larger rosters. Keep the two labeled rosters, participant actions, and driver cards. Verify that short entries fit on one row and longer entries and actions can wrap at phone widths. Student inspection is pending.
+
+Drivers use green rows and passengers use blue rows. The text headings and action labels identify roles independently of color. Short roster entries fit on one line at desktop widths and can wrap on phones. Plan cards use the same colors with more compact headers and passenger rows. Review blobs are `a0f380f6678d` for the dashboard, `a2fb736c9375` for CSS, and `0b19eb935bff` for browser assertions.
+
+The first browser run found that the compact row refactor disabled Cancel when tab storage was blocked. The affected workflow expects the existing feedback and zero requests. Restored the existing action state and reran verification.
+
+Lint, typecheck, the production build, and all 33 Chromium workflows passed on the final revision. The layout check covers compact rows and distinct role colors on desktop, driver cards after reload, and a 68-character passenger name at 390 px without horizontal overflow.
+
+### Shareable trip invitations
+
+The student asked for shareable invite links that let guests register themselves as a driver or passenger. Add a separate guest page and scoped registration and address search. Verify both trip modes, receipt recovery and the separation between the public invitation and organizer data. Student inspection is pending.
+
+Migration 004 adds a separate random invitation ID to every trip. The organizer can copy a guest link, and guests can register with either role. The guest view exposes the trip name, destination, and departure. Its address selections bind to the invitation ID. Guest registration shares the roster limits, locking, and same-key recovery of the organizer workflow.
+
+Review blobs are `966e503b94a3` for the migration, `048dd95a0ab8` for the trip service, `1f00f8127862` for search, `c5613f8cb7ae` for guest registration, and `6cb7f4fbc91b` for the browser tests. The additive migration succeeded on the local demo database. A browser opened the existing trip’s invitation page on port 3000 and confirmed that the organizer ID was absent from the guest page. That check submitted no demo registrations.
+
+Lint, typecheck, the production build, 2 setup tests, 469 unit tests, the database test, 289 PostgreSQL concurrency tests, and 35 Chromium workflows passed. The initial concurrency run caught three assertions that pinned the old migration history and snapshot keys. Updated the expectations and used the W6 upgrade fixture to verify a distinct invite ID is added to an existing trip. The full concurrency rerun passed. Chromium verified both registration roles in both trip modes, the guest token scope, an invalid link, the organizer preview, and exact-key retry following a lost response. External hosting and student inspection remain pending.
+
 ## Checkpoint D pilot preparation
 
 The student asked Codex to proceed from committed C (`2b50353`). This episode covers D1 attribution on suggestions, previews and saved estimates, and preparing the Geoapify search path against fictional provider responses. Live L-19 measurements depend on the owner’s L-18 project and credit confirmation. Student inspection is pending.

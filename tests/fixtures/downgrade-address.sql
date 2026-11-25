@@ -1,5 +1,4 @@
--- Test-only: undo exactly what db/migrations/002_address_trips.sql and
--- 003_address_driver_limit.sql add, so the upgrade test can re-apply the REAL
+-- Test-only: undo migrations 002 through 004 so the upgrade test can re-apply the
 -- migrations over retained W6-shaped rows.
 -- Never run by the application.
 ALTER TABLE match_previews
@@ -28,7 +27,8 @@ ALTER TABLE trips
   DROP CONSTRAINT trip_id_mode,
   DROP CONSTRAINT trip_mode_venue,
   DROP COLUMN venue_location,
-  DROP COLUMN location_mode;
+  DROP COLUMN location_mode,
+  DROP COLUMN invite_id;
 
 DROP TABLE dataset_generation;
-DELETE FROM schema_migrations WHERE name IN ('002_address_trips.sql', '003_address_driver_limit.sql');
+DELETE FROM schema_migrations WHERE name IN ('002_address_trips.sql', '003_address_driver_limit.sql', '004_trip_invites.sql');
