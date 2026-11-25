@@ -16,7 +16,7 @@ import {
 } from "../matching/index.ts";
 import { projectAddressMatchInput } from "../matching/address.ts";
 import { routingPolicyFor } from "../routing/index.ts";
-import { validateEvidence } from "./address-evidence.ts";
+import { assertSummaryMatchesEvidence, parseSummary, validateEvidence } from "./address-evidence.ts";
 import { toAddressRoster, tripProvider } from "./address-roster.ts";
 import { type AppliedResult, type MutationResponse, runKeyedMutation } from "./mutation.ts";
 import { expectedAlgorithm } from "./preview.ts";
@@ -93,10 +93,22 @@ export function commitPreview(
           repo.listRequests(client, tripId),
         ]);
         const addressRoster = toAddressRoster(trip, drivers, requests);
+        const provider = tripProvider(trip);
+        const policy = routingPolicyFor(provider);
         const legs = validateEvidence(
           await repo.findPreviewEvidence(client, tripId, preview.id),
           addressRoster,
-          routingPolicyFor(tripProvider(trip)),
+          policy,
+        );
+        // The dashboard validates this summary on every read, so a plan whose summary is
+        // unusable must not be saved (ISSUE-071); a failure here rolls back to the prior plan.
+        if (preview.routing_policy !== policy) throw new Error("Stored preview has another routing policy.");
+        assertSummaryMatchesEvidence(
+          parseSummary(preview.summary, { routingPolicy: policy, provider, algorithmVersion: preview.algorithm_version }),
+          legs,
+          addressRoster,
+          provider,
+          policy,
         );
         assertFeasible(projectAddressMatchInput(addressRoster, legs).input, optimal);
       } else {

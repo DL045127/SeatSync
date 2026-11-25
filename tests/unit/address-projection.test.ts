@@ -172,7 +172,14 @@ describe("rounding, no-route and missing observations", () => {
   test("half-seconds round up, a negative difference clamps to zero and is flagged", () => {
     expect(detourSeconds(10.5, 0, 0)).toEqual({ seconds: 11, clamped: false });
     expect(detourSeconds(10.4, 0, 0)).toEqual({ seconds: 10, clamped: false });
-    expect(detourSeconds(0, 0, 0.5)).toEqual({ seconds: 0, clamped: false });
+    // A NEGATIVE ESTIMATE is counted BEFORE rounding (ISSUE-069): -0.5 s rounds to 0 but is still negative.
+    expect(detourSeconds(0, 0, 0.5)).toEqual({ seconds: 0, clamped: true });
+    expect(detourSeconds(0, 0, 0.25)).toEqual({ seconds: 0, clamped: true });
+    expect(detourSeconds(100, 50, 150.25)).toEqual({ seconds: 0, clamped: true });
+    expect(detourSeconds(0.25, 0, 0.5)).toEqual({ seconds: 0, clamped: true }); // -0.25
+    expect(detourSeconds(100, 100, 200)).toEqual({ seconds: 0, clamped: false }); // exactly zero is not negative
+    expect(detourSeconds(100, 100, 199.75)).toEqual({ seconds: 0, clamped: false }); // +0.25 rounds to 0, positive
+    expect(detourSeconds(100, 100, 199.5)).toEqual({ seconds: 1, clamped: false }); // +0.5 rounds UP to 1
     expect(detourSeconds(100, 100, 250)).toEqual({ seconds: 0, clamped: true });
     expect(detourSeconds(1, 1, 5)).toEqual({ seconds: 0, clamped: true });
   });

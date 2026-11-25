@@ -106,14 +106,42 @@ export function requiredPairs(roster: AddressRoster): DirectedPair[] {
   return [...pairs.values()];
 }
 
-/** Half-up rounding of the final difference, clamped at zero. */
+/**
+ * Directed pairs worth RETAINING between previews: every driver->pickup,
+ * driver->venue and pickup->venue pair over ALL active drivers (including those
+ * offering zero seats, who may regain capacity) and all active pickups. A pair
+ * stays while some active participant still references the relevant location in
+ * that role; once the last reference is withdrawn or canceled the pair drops
+ * from the next preview. This is a superset of requiredPairs.
+ */
+export function retentionPairs(roster: AddressRoster): DirectedPair[] {
+  const drivers = roster.drivers.filter((d) => d.active);
+  const passengers = roster.passengers.filter((p) => p.active);
+  const pairs = new Map<string, DirectedPair>();
+  const add = (from: AddressPoint, to: AddressPoint) => {
+    if (from.id === to.id) return;
+    const key = legKey(from.id, to.id);
+    if (!pairs.has(key)) pairs.set(key, { from, to });
+  };
+  for (const d of drivers) {
+    add(d.location, roster.venue);
+    for (const p of passengers) add(d.location, p.location);
+  }
+  for (const p of passengers) add(p.location, roster.venue);
+  return [...pairs.values()];
+}
+
+/**
+ * Half-up rounding of the final difference, clamped at zero. A NEGATIVE
+ * ESTIMATE is counted before rounding: -0.25 s rounds to 0 but is still a
+ * negative estimate the profile-quality counter must see (ISSUE-069).
+ */
 export function detourSeconds(driverToPickup: number, pickupToVenue: number, driverToVenue: number): {
   seconds: number;
   clamped: boolean;
 } {
   const difference = driverToPickup + pickupToVenue - driverToVenue;
-  const rounded = Math.floor(difference + 0.5);
-  return rounded < 0 ? { seconds: 0, clamped: true } : { seconds: rounded, clamped: false };
+  return { seconds: Math.max(0, Math.floor(difference + 0.5)), clamped: difference < 0 };
 }
 
 export class AddressEvidenceError extends Error {

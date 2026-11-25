@@ -16,6 +16,19 @@ export interface RoutingAdapter {
   fetchLegs(pairs: readonly DirectedPair[]): Promise<Array<number | null>>;
 }
 
+/**
+ * Routing cannot supply the cells a preview needs right now: the provider is
+ * disabled, unreachable, throttled or refused the request. It is a retryable
+ * availability failure for the unkeyed preview (a 503), never a verdict on the
+ * roster, and it leaves no partial preview behind.
+ */
+export class RoutingUnavailable extends Error {
+  constructor(message = "Driving times are unavailable right now.") {
+    super(message);
+    this.name = "RoutingUnavailable";
+  }
+}
+
 export class RoutingResultError extends Error {
   constructor(message: string) {
     super(message);

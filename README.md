@@ -69,7 +69,9 @@ The first search creates an owner-only (`0700`/`0600`) signing secret at `.group
 
 For the verified expectations, try Event Hall (venue), a driver starting at *Driver Start Delta* and a passenger at *Pickup Alpha*: Delta→Alpha 403 s + Alpha→Hall 346 s − Delta→Hall 519 s = **230 s**, shown as “3 min 50 s”. Costs on an address trip are estimated extra driving seconds, labelled as the sum of individual pickup detours; zone trips keep their synthetic cost units.
 
-Verified commands for this checkpoint (Node 24, the local test database): `npm run lint`, `npm run typecheck`, `npm run test:unit`, `npm run test:concurrency`, `npm run test:e2e`. [L-01–L-04 evidence](docs/EVIDENCE.md#checkpoint-a-closeout)
+After the first preview, later previews of the same trip **reuse the earlier driving times** and fetch only the legs still missing (the estimate reports how many were `fetched`, `reused` and `local`). A cancellation, withdrawal or seat change usually needs nothing new, and a driver who offers no seats keeps their earlier observations in case capacity returns. If a preview needs a leg it does not have while routing is unavailable, it returns `503 ROUTING_UNAVAILABLE` and publishes nothing; a preview whose legs are all known still works. Saved plans, stored previews and commits never need routing.
+
+Verified commands for this checkpoint (Node 24, the local test database): `npm run lint`, `npm run typecheck`, `npm run test:matching`, `npm run test:unit`, `npm run test:concurrency`, `npm run test:e2e`. [L-01–L-04 evidence](docs/EVIDENCE.md#checkpoint-a-closeout) · [L-05–L-12 evidence](docs/EVIDENCE.md#checkpoint-b-closeout)
 
 ## Demonstration (W3 workflow)
 

@@ -56,7 +56,7 @@ describe("one driver, one passenger: 230 seconds", () => {
     expect(preview.body.locationMode).toBe("address");
     expect(preview.body.optimal).toMatchObject({ matchedCount: 1, totalCost: 230 });
     expect(preview.body.optimal.assignments[0].cost).toBe(230);
-    expect(preview.body.algorithmVersion).toBe("mincostflow-v1+address-evidence-1+fixture/drive/fixture-catalog-1/rounding-1");
+    expect(preview.body.algorithmVersion).toBe("mincostflow-v1+address-evidence-2+fixture/drive/fixture-catalog-1/rounding-1");
     expect(preview.body.estimate).toMatchObject({
       costUnit: "detour_seconds",
       provider: "fixture",
@@ -219,7 +219,7 @@ describe("commit trusts only evidence that matches the current roster", () => {
     process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
     await registerPassenger(pool, tripId, "Late", "Pickup Bravo");
     process.env.GROUPRIDE_ADDRESS_PROVIDER = "off";
-    await expect(publishPreview(pool, tripId)).rejects.toMatchObject({ code: "ADDRESS_PROVIDER_UNAVAILABLE" });
+    await expect(publishPreview(pool, tripId)).rejects.toMatchObject({ code: "ROUTING_UNAVAILABLE" });
     expect((await admin.query("SELECT 1 FROM match_previews")).rowCount).toBe(1); // nothing partial published
   });
 

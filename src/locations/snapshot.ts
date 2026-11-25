@@ -4,6 +4,7 @@
 // entrance that was confirmed. No credentials, SQL or filesystem access here.
 
 import { z } from "zod";
+import { StoredDataError } from "../contracts/errors.ts";
 
 export const PURPOSES = ["venue", "driver_start", "pickup"] as const;
 export type Purpose = (typeof PURPOSES)[number];
@@ -66,7 +67,13 @@ export const locationSnapshotSchema = snapshotBodySchema
   .extend({
     id: canonicalUuid,
     provider: z.enum(PROVIDERS),
-    issuedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+    issuedAt: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+      .refine((v) => {
+        const t = Date.parse(v);
+        return Number.isFinite(t) && new Date(t).toISOString() === v;
+      }, "Not a real calendar instant."),
   })
   .strict();
 export type LocationSnapshot = z.infer<typeof locationSnapshotSchema>;
@@ -101,7 +108,13 @@ export function toStoredSnapshot(
   });
 }
 
-/** Parse a snapshot read back from the database; malformed JSON is an invariant failure. */
+/**
+ * Parse a snapshot read back from the database. Malformed stored data is a
+ * server-side failure (StoredDataError), not a ZodError: the HTTP layer reports
+ * a ZodError as a 400 about the request, which a corrupt row is not.
+ */
 export function parseStoredSnapshot(value: unknown): LocationSnapshot {
-  return locationSnapshotSchema.parse(value);
+  const parsed = locationSnapshotSchema.safeParse(value);
+  if (!parsed.success) throw new StoredDataError("A stored location snapshot is malformed.", parsed.error);
+  return parsed.data;
 }

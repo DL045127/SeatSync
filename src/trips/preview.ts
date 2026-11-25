@@ -8,7 +8,7 @@
 
 import { performance } from "node:perf_hooks";
 import type { Pool, PoolClient } from "pg";
-import { TerminalBusinessError, TransientFailure } from "../contracts/errors.ts";
+import { StoredDataError, TerminalBusinessError, TransientFailure } from "../contracts/errors.ts";
 import { recordPreview } from "./preview-telemetry.ts";
 import { normalizeUuid } from "../contracts/index.ts";
 import { classifyUnkeyedFailure } from "../db/classify.ts";
@@ -24,9 +24,24 @@ import {
   projectMatchInput,
 } from "../matching/index.ts";
 import type { AddressRoster } from "../matching/address.ts";
-import { routingAdapterFor, routingPolicyFor } from "../routing/index.ts";
-import { addressAlgorithmId, parseSummary, type EstimateSummary } from "./address-evidence.ts";
+import type { ProviderName } from "../locations/snapshot.ts";
+import type { Leg } from "../matching/address.ts";
+import { AddressEvidenceError } from "../matching/address.ts";
+import {
+  RoutingResultError,
+  RoutingUnavailable,
+  routingAdapterFor,
+  routingPolicyFor,
+} from "../routing/index.ts";
+import {
+  addressAlgorithmId,
+  parseSummary,
+  validateCandidate,
+  type EstimateSummary,
+} from "./address-evidence.ts";
+import { addressCounters } from "./address-metrics.ts";
 import { toAddressRoster, tripProvider } from "./address-roster.ts";
+import { assertResultMatchesRoster, pickResult, type RosterFacts } from "./preview-integrity.ts";
 import { computeAddressPreview, type AddressPreviewComputation } from "./address-preview.ts";
 import * as repo from "./repository.ts";
 
@@ -162,28 +177,92 @@ function validResult(value: unknown): value is MatchingResult {
   return true;
 }
 
-function toResponse(preview: repo.PreviewRow): PreviewResponse {
+/** What a stored row is checked against before it is served: the roster at its version, and the trip's routing. */
+interface ResponseContext {
+  facts: RosterFacts;
+  /** Present for an address trip: its pinned provider and the CURRENT routing policy for it. */
+  address?: { provider: ProviderName; policyId: string };
+}
+
+/**
+ * Build the response for a stored or freshly published row. Nothing is echoed
+ * raw: the results are copied field by field, must describe THIS trip's roster,
+ * and an address row's summary must agree with its own row and the applicable
+ * policy. Anything inconsistent is a server-side StoredDataError (HTTP 500).
+ */
+function toResponse(preview: repo.PreviewRow, context: ResponseContext): PreviewResponse {
   if (!validResult(preview.optimal_result) || !validResult(preview.greedy_result)) {
     // A corrupt cached preview is an invariant violation, not a servable 200.
-    throw new Error("Stored preview result is malformed.");
+    throw new StoredDataError("Stored preview result is malformed.");
   }
+  assertResultMatchesRoster(preview.optimal_result, context.facts, "optimal");
+  assertResultMatchesRoster(preview.greedy_result, context.facts, "greedy");
   const body: PreviewResponse["body"] = {
     previewId: preview.id,
     baseVersion: preview.base_version,
     algorithmVersion: preview.algorithm_version,
-    optimal: preview.optimal_result as MatchingResult,
-    greedy: preview.greedy_result as MatchingResult,
+    optimal: pickResult(preview.optimal_result),
+    greedy: pickResult(preview.greedy_result),
   };
-  if (preview.cost_unit === "detour_seconds") {
+  if ((preview.cost_unit === "detour_seconds") !== (context.address !== undefined)) {
+    throw new StoredDataError("A stored preview's cost unit disagrees with its trip's mode.");
+  }
+  if (preview.cost_unit === "detour_seconds" && context.address) {
+    if (preview.routing_policy !== context.address.policyId) {
+      throw new StoredDataError("A stored preview's routing policy is not the applicable one.");
+    }
     // A display read validates the public summary only; the private evidence is
     // never loaded here (it is checked on publication and at commit).
     body.locationMode = "address";
     body.costUnit = "detour_seconds";
-    body.estimate = parseSummary(preview.summary);
+    body.estimate = parseSummary(preview.summary, {
+      routingPolicy: context.address.policyId,
+      provider: context.address.provider,
+      algorithmVersion: preview.algorithm_version,
+    });
   }
   return { httpStatus: 200, body };
 }
 
+
+/** Earlier releases' evidence schemas, each with the algorithm identifier that release wrote. */
+const LEGACY_ALGORITHMS = new Map<string, (policyId: string) => string>([
+  ["address-evidence-1", (policyId) => `${ALGORITHM_VERSION}+address-evidence-1+${policyId}`],
+]);
+
+/**
+ * Offer the most recent compatible earlier preview's legs for reuse. A candidate
+ * that fails validation is DISCARDED WHOLE: counted once as an invariant
+ * failure, none of its legs are reused, older rows are not tried, and the
+ * attempt takes the ordinary cold path. Only a stored-evidence problem is
+ * swallowed here; a database failure keeps its normal classification.
+ */
+async function readReuseCandidate(
+  client: PoolClient,
+  tripId: string,
+  version: number,
+  roster: AddressRoster,
+  policyId: string,
+): Promise<Map<string, Leg> | undefined> {
+  const row = await repo.findReuseCandidate(client, tripId, policyId, version);
+  if (!row) return undefined;
+  // A GENUINE legacy row is simply not a candidate: not a failure, and not a reason to reach for
+  // an older row. "Genuine" means the known legacy schema AND that release's own algorithm
+  // revision together; a self-declared tag alone proves nothing, so a typo, an unknown future
+  // revision, or an old label on a current row is corruption and is counted.
+  const schema = (row.evidence as { schema?: unknown } | null)?.schema;
+  const legacy = typeof schema === "string" ? LEGACY_ALGORITHMS.get(schema)?.(policyId) : undefined;
+  if (legacy !== undefined && row.algorithmVersion === legacy) return undefined;
+  try {
+    return validateCandidate(row.evidence, roster, policyId);
+  } catch (error) {
+    if (!(error instanceof AddressEvidenceError)) throw error;
+    addressCounters.reuseCandidateDiscarded += 1;
+    // Counts and the preview ID only: never an address, coordinate or name.
+    console.error(`Discarded a corrupt routing-evidence candidate (preview ${row.id}); rebuilding every leg.`);
+    return undefined;
+  }
+}
 
 /**
  * Publish or reuse a preview for the trip's current version. Throws
@@ -218,7 +297,17 @@ async function publishPreviewInner(
     let roster: Roster | undefined;
     let addressRoster: AddressRoster | undefined;
     let provider: ReturnType<typeof tripProvider> | undefined;
-    if (!existing) {
+    let candidate: Map<string, Leg> | undefined;
+    let hit: ResponseContext | undefined;
+    if (existing) {
+      // A stored hit is judged against the roster at its version before it is served.
+      hit = {
+        facts: await repo.listParticipantFacts(client, tripId),
+        address: trip.location_mode === "address"
+          ? { provider: tripProvider(trip), policyId: routingPolicyFor(tripProvider(trip)) }
+          : undefined,
+      };
+    } else {
       if (trip.location_mode === "address") {
         const [drivers, requests] = await Promise.all([
           repo.listDrivers(client, tripId),
@@ -226,16 +315,17 @@ async function publishPreviewInner(
         ]);
         addressRoster = toAddressRoster(trip, drivers, requests);
         provider = tripProvider(trip);
+        candidate = await readReuseCandidate(client, tripId, trip.version, addressRoster, routingPolicyFor(provider));
       } else {
         roster = await readRoster(client, tripId);
       }
     }
-    return { version: trip.version, algorithm, existing, roster, addressRoster, provider };
+    return { version: trip.version, algorithm, existing, hit, roster, addressRoster, provider, candidate };
   });
 
   if (snapshot.existing) {
     recordPreview({ cacheHit: true, matcherMs: null });
-    return toResponse(snapshot.existing);
+    return toResponse(snapshot.existing, snapshot.hit!);
   }
 
   // Step 2: compute optimal and greedy outside any lock; validated internally.
@@ -245,13 +335,31 @@ async function publishPreviewInner(
   let computation: { algorithmVersion: string; optimal: MatchingResult; greedy: MatchingResult };
   let addressResult: AddressPreviewComputation | undefined;
   if (snapshot.addressRoster) {
-    if (addressProvider() !== snapshot.provider) {
-      throw new TransientFailure(
-        "ADDRESS_PROVIDER_UNAVAILABLE",
-        "This trip's address provider is not available, so a new estimate cannot be made.",
+    const provider = snapshot.provider!;
+    try {
+      addressResult = await computeAddressPreview(
+        snapshot.addressRoster,
+        {
+          provider,
+          policyId: routingPolicyFor(provider),
+          // Built lazily: a rematch that needs no new observation never touches routing,
+          // so it still publishes while routing is unavailable.
+          adapter: () => {
+            if (addressProvider() !== provider) {
+              throw new RoutingUnavailable("This trip's address provider is not available, so new driving times cannot be fetched.");
+            }
+            return routingAdapterFor(provider);
+          },
+        },
+        snapshot.candidate,
       );
+    } catch (error) {
+      // An outage or a malformed matrix is a retryable availability failure that publishes nothing.
+      if (error instanceof RoutingUnavailable || error instanceof RoutingResultError) {
+        throw new TransientFailure("ROUTING_UNAVAILABLE", error.message, error);
+      }
+      throw error;
     }
-    addressResult = await computeAddressPreview(snapshot.addressRoster, routingAdapterFor(snapshot.provider!));
     computation = addressResult;
   } else {
     computation = computeMatch(projectMatchInput(snapshot.roster!));
@@ -297,6 +405,11 @@ async function publishPreviewInner(
         evidence: addressResult.evidence,
       },
     }));
-    return toResponse(preview);
+    // Whether inserted just now or published by a concurrent request, the row is checked the
+    // same way before it is returned.
+    return toResponse(preview, {
+      facts: await repo.listParticipantFacts(client, tripId),
+      address: snapshot.provider ? { provider: snapshot.provider, policyId: routingPolicyFor(snapshot.provider) } : undefined,
+    });
   });
 }

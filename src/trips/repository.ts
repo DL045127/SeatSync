@@ -371,17 +371,74 @@ export async function findPreviewById(
   return result.rows[0];
 }
 
-/** The public estimate summary of a preview. Never selects the private evidence column. */
+/**
+ * The NEWEST earlier preview of this trip under this routing policy, which is the
+ * one candidate offered for reuse: the highest base version at or below
+ * `maxVersion` (ties by preview ID). Its schema is deliberately NOT part of the
+ * query. If the newest row cannot be read, the caller discards the whole
+ * candidate rather than silently reaching for an older row, so a missing or
+ * wiped schema must still be returned here to be noticed. This loads the private
+ * evidence column, which only leg reuse and commit ever do.
+ */
+export async function findReuseCandidate(
+  client: PoolClient,
+  tripId: string,
+  routingPolicy: string,
+  maxVersion: number,
+): Promise<{ id: string; baseVersion: number; algorithmVersion: string; evidence: unknown } | undefined> {
+  const result = await client.query<{ id: string; base_version: number; algorithm_version: string; evidence: unknown }>(
+    `SELECT id, base_version, algorithm_version, evidence
+       FROM match_previews
+      WHERE trip_id = $1 AND routing_policy = $2 AND cost_unit = 'detour_seconds'
+        AND base_version <= $3
+      ORDER BY base_version DESC, id DESC
+      LIMIT 1`,
+    [tripId, routingPolicy, maxVersion],
+  );
+  const row = result.rows[0];
+  return row && { id: row.id, baseVersion: row.base_version, algorithmVersion: row.algorithm_version, evidence: row.evidence };
+}
+
+/**
+ * The public estimate summary of a preview, with the routing policy recorded in
+ * the row's own column so the summary can be checked against it. Never selects
+ * the private evidence column.
+ */
 export async function findPreviewSummary(
   client: PoolClient,
   tripId: string,
   previewId: string,
-): Promise<unknown> {
-  const result = await client.query<{ summary: unknown }>(
-    "SELECT summary FROM match_previews WHERE trip_id = $1 AND id = $2",
+): Promise<{ summary: unknown; routingPolicy: string | null } | undefined> {
+  const result = await client.query<{ summary: unknown; routing_policy: string | null }>(
+    "SELECT summary, routing_policy FROM match_previews WHERE trip_id = $1 AND id = $2",
     [tripId, previewId],
   );
-  return result.rows[0]?.summary ?? null;
+  const row = result.rows[0];
+  return row && { summary: row.summary, routingPolicy: row.routing_policy };
+}
+
+/**
+ * What a stored result is checked against before it is served again: the id,
+ * seat count and activity of every driver and the id and activity of every
+ * passenger. No locations and no private evidence.
+ */
+export async function listParticipantFacts(
+  client: PoolClient,
+  tripId: string,
+): Promise<{
+  drivers: Array<{ id: string; seats: number; active: boolean }>;
+  passengers: Array<{ id: string; active: boolean }>;
+}> {
+  const [drivers, passengers] = await Promise.all([
+    client.query<{ id: string; seat_capacity: number; active: boolean }>(
+      "SELECT id, seat_capacity, active FROM drivers WHERE trip_id = $1", [tripId]),
+    client.query<{ id: string; active: boolean }>(
+      "SELECT id, active FROM ride_requests WHERE trip_id = $1", [tripId]),
+  ]);
+  return {
+    drivers: drivers.rows.map((d) => ({ id: d.id, seats: d.seat_capacity, active: d.active })),
+    passengers: passengers.rows,
+  };
 }
 
 /** Load a preview's private routing evidence. Used by commit only. */

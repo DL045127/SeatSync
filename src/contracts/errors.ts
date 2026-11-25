@@ -18,6 +18,7 @@ export type ErrorCode =
   | "LOCATION_MODE_MISMATCH"
   | "SELECTION_KEY_UNAVAILABLE"
   | "ADDRESS_PROVIDER_UNAVAILABLE"
+  | "ROUTING_UNAVAILABLE"
   | "CROSS_SITE_REQUEST"
   | "INTERNAL_ERROR";
 
@@ -65,6 +66,19 @@ export class TerminalBusinessError extends Error {
 }
 
 /**
+ * Data this server stored earlier cannot be trusted: a corrupt or hand-edited
+ * row, a summary that contradicts itself, a result naming someone outside the
+ * trip. It is a SERVER-side failure (HTTP 500) and never a verdict on the
+ * request, so it must not be a ZodError (which the HTTP layer reports as a 400).
+ */
+export class StoredDataError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "StoredDataError";
+  }
+}
+
+/**
  * A transient failure (timeout, lock wait, database unavailable). It does NOT
  * finalize the request key: no terminal receipt is written and a same-key retry
  * may still execute. Mapped to a 503 whose outcome metadata is omitted or
@@ -77,6 +91,7 @@ export class TransientFailure extends Error {
     | "DATABASE_UNAVAILABLE"
     | "SELECTION_KEY_UNAVAILABLE"
     | "ADDRESS_PROVIDER_UNAVAILABLE"
+    | "ROUTING_UNAVAILABLE"
   >;
   constructor(code: TransientFailure["code"], message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });

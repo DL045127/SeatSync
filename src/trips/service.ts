@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { TerminalBusinessError } from "../contracts/errors.ts";
+import { StoredDataError, TerminalBusinessError } from "../contracts/errors.ts";
 import {
   LIMITS,
   isAddressAddDriver,
@@ -137,10 +137,22 @@ export async function getTripSnapshot(
       repo.listRequests(client, tripId),
       repo.listAssignments(client, tripId),
     ]);
-    // The committed plan's public summary. Never the private leg evidence.
-    const estimate = trip.location_mode === "address" && trip.committed_preview_id
-      ? await repo.findPreviewSummary(client, tripId, trip.committed_preview_id)
-      : null;
+    // The committed plan's public summary. Never the private leg evidence. It is judged against
+    // the row that holds it (its own recorded policy, which may be an OLDER policy than today's,
+    // so a saved plan stays readable after an upgrade) and the trip's provider, and must be
+    // consistent in itself.
+    let estimate: EstimateSummary | null = null;
+    if (trip.location_mode === "address" && trip.committed_preview_id) {
+      const stored = await repo.findPreviewSummary(client, tripId, trip.committed_preview_id);
+      if (!stored || stored.routingPolicy === null) {
+        throw new StoredDataError("The committed preview of an address trip has no estimate summary.");
+      }
+      estimate = parseSummary(stored.summary, {
+        routingPolicy: stored.routingPolicy,
+        provider: tripProvider(trip),
+        algorithmVersion: trip.algorithm_version ?? undefined,
+      });
+    }
     return toSnapshot(trip, drivers, requests, assignments, estimate);
   });
 }
@@ -150,7 +162,7 @@ function toSnapshot(
   drivers: repo.DriverRow[],
   requests: repo.RequestRow[],
   assignments: repo.AssignmentRow[],
-  estimate: unknown,
+  estimate: EstimateSummary | null,
 ): TripSnapshot {
   const totalCost = assignments.reduce((s, a) => s + a.pickup_cost, 0);
   const seatsAvailable = drivers
@@ -164,7 +176,7 @@ function toSnapshot(
     locationMode: trip.location_mode,
     costUnit: trip.location_mode === "address" ? "detour_seconds" : "zone_cost",
     venue: trip.location_mode === "address" ? viewOf(trip.venue_location) : null,
-    estimate: estimate ? parseSummary(estimate) : null,
+    estimate,
     status: trip.status,
     version: trip.version,
     planVersion: trip.plan_version,
