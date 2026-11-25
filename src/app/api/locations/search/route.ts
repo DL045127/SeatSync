@@ -1,4 +1,5 @@
 import { appPool, readJsonBody, rejectCrossSite, runPreview } from "../../http.ts";
+import { searchDeadline } from "../../../../db/deadline.ts";
 import { searchLocations } from "../../../../locations/selection-service.ts";
 
 export const runtime = "nodejs";
@@ -10,7 +11,10 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request): Promise<Response> {
   const crossSite = rejectCrossSite(request);
   if (crossSite) return crossSite;
-  const body = await readJsonBody(request);
-  if (body instanceof Response) return body;
-  return runPreview(() => searchLocations(appPool(), body));
+  const deadline = searchDeadline(request.signal);
+  return runPreview(async () => {
+    const body = await readJsonBody(request, deadline);
+    if (body instanceof Response) return body;
+    return searchLocations(appPool(), body, undefined, deadline);
+  });
 }

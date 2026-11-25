@@ -119,6 +119,38 @@ test("L-03: ambiguous results are shown but cannot be chosen, and empty results 
   await expect(page.getByText(/Selected:/)).toHaveCount(0);
 });
 
+test("ISSUE-084: the picker asks which building, clears the old choice and accepts a clarified street", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Trip type").selectOption("address");
+  await page.getByLabel("Trip name").fill("Clarify the venue");
+  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await chooseByKeyboard(page, "Venue", "event hall", VENUE);
+  const box = page.getByRole("combobox", { name: "Venue" });
+  const create = page.getByRole("button", { name: "Create trip" });
+  const clarification = page.getByTestId("picker-venue").getByRole("alert");
+  for (const [ambiguous, corrected] of [
+    ["100 Fixture Plaza, 11 Alpha Court", "100 Fixture Plaza"],
+    ["100 Fixture Plaza - 11 Alpha Court", '"Event Hall"'],
+    ["100 Fixture Plaza, Austin, TX - 11 Alpha Court, Dallas, TX", '"Event Hall", Fixtureville, TX'],
+    ["100 Fixture Plaza, Austin, TX, or 11 Alpha Court, Dallas, TX", "100 Fixture Plaza"],
+  ]) {
+    await expect(create).toBeEnabled();
+    await box.fill(ambiguous);
+    await expect(clarification).toContainText("Enter one building number and street name.");
+    await expect(suggestions(page)).toHaveCount(0);
+    await box.press("Enter");
+    await expect(create).toBeDisabled();
+    await box.fill("");
+    await chooseByKeyboard(page, "Venue", corrected, VENUE);
+    await expect(clarification).toHaveCount(0);
+    await expect(create).toBeEnabled();
+  }
+  await box.fill('"Event Hall", Austin, TX, USA');
+  await expect(page.getByText("No matching address.")).toBeVisible();
+  await expect(suggestions(page)).toHaveCount(0);
+  await expect(create).toBeDisabled();
+});
+
 test("L-03: editing the text clears the selection, so the form cannot submit a stale address", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Trip type").selectOption("address");
@@ -336,4 +368,58 @@ test("L-17: browser deadline aborts a stalled response and Retry recovers the sa
   await retry.click();
   expect(await (await retryResponse).json()).toMatchObject({ previewId: winner });
   await expect(save).toBeEnabled();
+});
+
+test("L-18: live-format fixture credits remain visible on suggestions, previews and saved estimates", async ({ page }) => {
+  const external = watchExternalRequests(page);
+  const source = "Fictional municipal address dataset";
+  // Preserve fixture tokens and database writes. Only the provider metadata
+  // presented to the browser is substituted in these recorded response shapes.
+  await page.route("**/api/locations/search", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), provider: "geoapify", attribution: source } });
+  });
+  await page.route(/\/api\/trips\/[\da-f-]+$/, async route => {
+    const response = await route.fetch();
+    const trip = await response.json();
+    trip.venue = { ...trip.venue, provider: "geoapify", attribution: source };
+    if (trip.estimate) trip.estimate.provider = "geoapify";
+    await route.fulfill({ response, json: trip });
+  });
+  await page.route("**/match/preview", async route => {
+    const response = await route.fetch();
+    const preview = await response.json();
+    preview.estimate.provider = "geoapify";
+    await route.fulfill({ response, json: preview });
+  });
+  const credits = async (id: string) => {
+    const section = page.getByTestId(id);
+    for (const [name, href] of [
+      ["Geoapify", "https://www.geoapify.com/"],
+      ["© OpenStreetMap contributors", "https://www.openstreetmap.org/copyright"],
+    ]) {
+      const link = section.getByRole("link", { name, exact: true });
+      await expect(link).toBeVisible();
+      await expect(link).toHaveAttribute("href", href);
+    }
+    await expect(section).toContainText(source);
+  };
+  await page.goto("/");
+  await page.getByLabel("Trip type").selectOption("address");
+  const notice = page.getByText(/Geoapify receives your search text/);
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Geoapify receives the selected driver start, passenger pickup, and venue coordinates");
+  await page.getByLabel("Trip name").fill("Credit display");
+  await page.getByLabel(/Departure/).fill("2027-03-05T17:30:00-06:00");
+  await page.getByRole("combobox", { name: "Venue" }).fill("event hall");
+  await credits("provider-attribution");
+  await suggestions(page).first().click();
+  await page.getByRole("button", { name: "Create trip" }).click();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await credits("preview-estimate");
+  await page.getByRole("button", { name: "Save plan (commit)" }).click();
+  await credits("saved-estimate");
+  await page.reload();
+  await credits("saved-estimate");
+  expect(external).toEqual([]);
 });

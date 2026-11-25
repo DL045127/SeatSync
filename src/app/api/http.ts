@@ -1,3 +1,4 @@
+import type { RequestDeadline } from "../../db/deadline.ts";
 // HTTP translation shared by the JSON route handlers. It extracts the request
 // key, parses the body, invokes a service function, and maps results and typed
 // errors to Response objects. No domain decisions live here.
@@ -177,7 +178,7 @@ export function readRequestKey(request: Request): string | Response {
  * cap, so a large body is never fully buffered and multibyte content is counted
  * by its UTF-8 size, not its UTF-16 code-unit length.
  */
-export async function readJsonBody(request: Request): Promise<unknown | Response> {
+export async function readJsonBody(request: Request, deadline?: RequestDeadline): Promise<unknown | Response> {
   const declared = request.headers.get("content-length");
   if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
     return invalidInput("Request body exceeds the 16 KiB limit.");
@@ -189,12 +190,15 @@ export async function readJsonBody(request: Request): Promise<unknown | Response
   if (body) {
     const reader = body.getReader();
     for (;;) {
-      const { done, value } = await reader.read();
+      deadline?.remaining();
+      const read = reader.read();
+      const { done, value } = await (deadline ? deadline.wait(read, () => { void reader.cancel().catch(() => {}); }) : read);
       if (done) break;
       if (value) {
         total += value.byteLength;
         if (total > MAX_BODY_BYTES) {
-          await reader.cancel();
+          const cancel = reader.cancel();
+          await (deadline ? deadline.wait(cancel) : cancel);
           return invalidInput("Request body exceeds the 16 KiB limit.");
         }
         chunks.push(value);
@@ -202,7 +206,8 @@ export async function readJsonBody(request: Request): Promise<unknown | Response
     }
   } else {
     // Some runtimes expose only text(); fall back and count UTF-8 bytes.
-    const text = await request.text();
+    const read = request.text();
+    const text = await (deadline ? deadline.wait(read) : read);
     const bytes = new TextEncoder().encode(text);
     if (bytes.byteLength > MAX_BODY_BYTES) {
       return invalidInput("Request body exceeds the 16 KiB limit.");
@@ -318,9 +323,10 @@ export async function runMutation(
  * metadata). Maps a TerminalBusinessError to its status/code and transient and
  * unexpected failures like the mutation path.
  */
-export async function runPreview(op: () => Promise<{ httpStatus: number; body: unknown }>): Promise<Response> {
+export async function runPreview(op: () => Promise<{ httpStatus: number; body: unknown } | Response>): Promise<Response> {
   try {
     const result = await op();
+    if (result instanceof Response) return result;
     return json(result.body, result.httpStatus);
   } catch (error) {
     if (error instanceof TerminalBusinessError) {

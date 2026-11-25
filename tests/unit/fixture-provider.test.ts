@@ -55,6 +55,18 @@ describe("catalog data", () => {
 });
 
 describe("search", () => {
+  test("qualified street, venue and free-text queries verify the catalog locality", () => {
+    for (const primary of ["100 Fixture Plaza", '"Event Hall"', "Event Hall"]) {
+      for (const locality of ["Fixtureville, Texas, USA", "TX 00001, United States"]) {
+        expect(fixtureSearch({ query: primary + ", " + locality, limit: 5 }).map(row => row.providerRef))
+          .toEqual(["fx-event-hall"]);
+      }
+      for (const locality of ["Austin, Texas", "Fixtureville, OK, USA", "TX 00002", "TX, Canada"]) {
+        expect(fixtureSearch({ query: primary + ", " + locality, limit: 5 })).toEqual([]);
+      }
+    }
+  });
+
   test("a query matches label, street or city, case-insensitively", () => {
     const labels = fixtureSearch({ query: "ALPHA court", limit: 5 }).map((c) => c.label);
     expect(labels).toEqual([

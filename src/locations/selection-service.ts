@@ -10,6 +10,7 @@ import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import { TerminalBusinessError, TransientFailure } from "../contracts/errors.ts";
 import { NormalizationError, normalizeUuid } from "../contracts/normalize.ts";
+import { RequestDeadline, searchDeadline } from "../db/deadline.ts";
 import { classifyUnkeyedFailure } from "../db/classify.ts";
 import { isRetryableQueryError, isTransportError } from "../db/commit-outcome.ts";
 import { assertDataset } from "../db/dataset.ts";
@@ -17,6 +18,7 @@ import { datasetLock } from "../db/local-target.ts";
 import { withTransaction } from "../db/transaction.ts";
 import { addressProvider, currentTarget, type AddressProvider } from "./config.ts";
 import { fixtureSearch, type SearchCandidate } from "./fixture-provider.ts";
+import { geoapifySearch } from "./geoapify.ts";
 import { FIXTURE_ATTRIBUTION } from "./fixture-catalog.ts";
 import {
   loadMaster,
@@ -87,15 +89,14 @@ function unavailableProvider(provider: AddressProvider): TransientFailure {
     "ADDRESS_PROVIDER_UNAVAILABLE",
     provider === "off"
       ? "Address search is disabled on this server."
-      : "The configured address provider is not available in this build.",
+      : "This trip’s address provider is unavailable.",
   );
 }
 
-/** Only the offline fixture provider exists in checkpoint A. */
-function requireFixtureProvider(deps: SelectionDeps): ProviderName {
+function requireProvider(deps: SelectionDeps): ProviderName {
   const provider = deps.provider();
-  if (provider !== "fixture") throw unavailableProvider(provider);
-  return "fixture";
+  if (provider === "off") throw unavailableProvider(provider);
+  return provider;
 }
 
 async function loadMasterOr503(deps: SelectionDeps): Promise<MasterKey> {
@@ -142,11 +143,11 @@ const REPLACED_SECRET_WARNING =
  * failure (a locked or slow table must never fail a search that needs no trip
  * data).
  */
-async function warnIfAddressTripsExistViaPool(pool: Pool, deps: SelectionDeps): Promise<void> {
+async function warnIfAddressTripsExistViaPool(pool: Pool, deps: SelectionDeps, deadline: RequestDeadline): Promise<void> {
   let exists = false;
   try {
     exists = await withTransaction(pool, "read", async (client) =>
-      ((await client.query("SELECT 1 FROM trips WHERE location_mode = 'address' LIMIT 1")).rowCount ?? 0) > 0);
+      ((await client.query("SELECT 1 FROM trips WHERE location_mode = 'address' LIMIT 1")).rowCount ?? 0) > 0, deadline);
   } catch {
     return;
   }
@@ -221,9 +222,12 @@ export async function searchLocations(
   pool: Pool,
   rawBody: unknown,
   deps: SelectionDeps = defaultSelectionDeps(),
+  budget: AbortSignal | RequestDeadline = searchDeadline(),
 ): Promise<SearchResponse> {
+  const deadline = budget instanceof RequestDeadline ? budget : searchDeadline(budget);
+  deadline.remaining();
   const request = normalizeSearch(rawBody);
-  const provider = requireFixtureProvider(deps);
+  const provider = requireProvider(deps);
 
   // One short READ ONLY snapshot captures the generation and the trip scope. It touches only
   // what the request needs: a venue search reads no trip data at all, so a busy or locked
@@ -246,19 +250,22 @@ export async function searchLocations(
       const venue = parseStoredSnapshot(trip.venue_location);
       if (venue.provider !== provider) throw unavailableProvider(deps.provider());
       return { generation, bias: { lon: venue.lon, lat: venue.lat } };
-    });
+    }, deadline);
   } catch (error) {
     throw classifyUnkeyedFailure(error);
   }
 
-  const { master, created } = await loadMasterOr503(deps);
+  deadline.remaining();
+  const { master, created } = await deadline.wait(loadMasterOr503(deps));
   // Whether address trips exist matters ONLY to the replacement warning, so it is asked only
   // when a secret was actually created, and a failure of that optional question is ignored.
-  if (created) await warnIfAddressTripsExistViaPool(pool, deps);
+  if (created) await warnIfAddressTripsExistViaPool(pool, deps, deadline);
+  deadline.remaining();
   const context: SelectionKeyContext = { master, generation: scope.generation };
 
+  const input = { query: request.query, bias: scope.bias, limit: SEARCH_LIMITS.results };
+  const candidates = provider === "fixture" ? fixtureSearch(input) : await deadline.wait(geoapifySearch(input, deadline.signal));
   const nowMs = deps.now();
-  const candidates = fixtureSearch({ query: request.query, bias: scope.bias, limit: SEARCH_LIMITS.results });
   const suggestions: Suggestion[] = candidates.map((candidate) => {
     const base = { label: candidate.label, detail: detailOf(candidate), precision: candidate.precision };
     if (!(USABLE_PRECISIONS as readonly string[]).includes(candidate.precision)) {
@@ -291,9 +298,11 @@ export async function searchLocations(
     }
   });
 
+  deadline.remaining();
   return {
     httpStatus: 200,
-    body: { provider, attribution: FIXTURE_ATTRIBUTION, suggestions },
+    body: { provider, attribution: provider === "fixture" ? FIXTURE_ATTRIBUTION
+      : [...new Set(candidates.map(c => c.attribution))].join(" · "), suggestions },
   };
 }
 
@@ -328,7 +337,7 @@ export async function verifyAttachment(
   expect: AttachExpectation,
   deps: SelectionDeps = defaultSelectionDeps(),
 ): Promise<LocationSnapshot> {
-  const provider = requireFixtureProvider(deps);
+  const provider = requireProvider(deps);
   if (expect.provider !== undefined && expect.provider !== provider) throw unavailableProvider(deps.provider());
   const generation = await readGeneration(client);
   const { master, created } = await loadMasterOr503(deps);

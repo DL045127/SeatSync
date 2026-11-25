@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { type PreviewDeadline } from "./deadline.ts";
+import { type RequestDeadline } from "./deadline.ts";
 import { classifyCommitFailure, sqlState } from "./commit-outcome.ts";
 
 /**
@@ -64,7 +64,7 @@ export function __setTransactionCommitFaultHook(
 }
 
 /** Cap each potentially blocking statement by the remaining absolute budget. */
-async function setRemainingTimeouts(client: PoolClient, deadline: PreviewDeadline) {
+async function setRemainingTimeouts(client: PoolClient, deadline: RequestDeadline) {
   const ms = deadline.remaining();
   await client.query(
     "SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)",
@@ -73,7 +73,7 @@ async function setRemainingTimeouts(client: PoolClient, deadline: PreviewDeadlin
   deadline.remaining();
 }
 
-function boundedClient(client: PoolClient, deadline: PreviewDeadline): PoolClient {
+function boundedClient(client: PoolClient, deadline: RequestDeadline): PoolClient {
   // A repository may start several reads with Promise.all on the same client.
   // Serialize each timeout-setting query with its own work statement.
   let previous: Promise<unknown> = Promise.resolve();
@@ -93,7 +93,7 @@ export async function withTransaction<T>(
   pool: Pool,
   mode: "read" | "write",
   work: (client: PoolClient) => Promise<T>,
-  deadline?: PreviewDeadline,
+  deadline?: RequestDeadline,
 ): Promise<T> {
   deadline?.remaining();
   const acquiring = pool.connect().then((client) => {
@@ -123,7 +123,7 @@ async function runTransaction<T>(
   mode: "read" | "write",
   work: (client: PoolClient) => Promise<T>,
   release: (discard: boolean) => void,
-  deadline?: PreviewDeadline,
+  deadline?: RequestDeadline,
 ): Promise<T> {
   let discard = false;
   let connectionError: Error | undefined;

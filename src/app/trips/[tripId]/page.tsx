@@ -9,6 +9,7 @@ import {
 } from "../reducer.ts";
 import { LIMITS } from "../../../contracts/index.ts";
 import { normalizeLabel } from "../../../contracts/normalize.ts";
+import { Attribution } from "../../locations/Attribution.tsx";
 import { LocationPicker, type Selection } from "../../locations/LocationPicker.tsx";
 import { type CostUnit, formatCost, formatSeconds, formatTotal } from "../format.ts";
 import {
@@ -92,6 +93,17 @@ interface Snapshot {
   assignments: Array<{ requestId: string; driverId: string; pickupCost: number }>;
   totals: { matched: number; totalCost: number; seatsUsed: number; seatsAvailable: number };
   [key: string]: unknown;
+}
+
+function EstimateDetails({ estimate, snapshot, saved = false }: { estimate: Estimate; snapshot: Snapshot; saved?: boolean }) {
+  const locations = [snapshot.venue, ...snapshot.drivers.filter(d => d.active).map(d => d.location),
+    ...snapshot.requests.filter(r => r.active).map(r => r.location)];
+  return <p data-testid={saved ? "saved-estimate" : "preview-estimate"}>
+    {saved ? "Saved estimate. " : ""}
+    {estimate.provider === "fixture" ? "Fixture estimate: fictional driving times. " : "Estimated driving times. "}
+    {estimate.observedFrom ? `Observed ${estimate.observedFrom}. ` : "No provider observations. "}
+    <Attribution provider={estimate.provider} sources={locations.flatMap(l => l ? [l.attribution] : [])} />
+  </p>;
 }
 
 export default function TripPage({ params }: { params: Promise<{ tripId: string }> }) {
@@ -353,7 +365,7 @@ function TripDashboard({ tripId }: { tripId: string }) {
               {snapshot.venue.provider === "fixture"
                 ? "Fixture data: fictional places and driving times."
                 : null}{" "}
-              {snapshot.venue.attribution}
+              <Attribution provider={snapshot.venue.provider} sources={[snapshot.venue.attribution]} />
             </p>
           ) : null}
 
@@ -437,14 +449,7 @@ function TripDashboard({ tripId }: { tripId: string }) {
                   .
                 </p>
                 {previewDetail.estimate ? (
-                  <p data-testid="preview-estimate">
-                    {previewDetail.estimate.provider === "fixture"
-                      ? "Fixture estimate: fictional driving times. "
-                      : "Estimated driving times. "}
-                    {previewDetail.estimate.observedFrom
-                      ? `Observed ${previewDetail.estimate.observedFrom}.`
-                      : "No provider observations."}
-                  </p>
+                  <EstimateDetails estimate={previewDetail.estimate} snapshot={snapshot} />
                 ) : null}
                 <ul data-testid="preview-assignments">
                   {previewDetail.optimal.assignments.map((a) => (
@@ -477,6 +482,7 @@ function TripDashboard({ tripId }: { tripId: string }) {
           {snapshot.status === "assigned" ? (
             <section>
               <h2>Saved plan</h2>
+              {snapshot.estimate && <EstimateDetails estimate={snapshot.estimate} snapshot={snapshot} saved />}
               <ul data-testid="saved-assignments">
                 {snapshot.assignments.map((a) => (
                   <li key={a.requestId}>

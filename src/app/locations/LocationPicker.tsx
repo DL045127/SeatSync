@@ -1,5 +1,6 @@
 "use client";
 
+import { Attribution } from "./Attribution.tsx";
 import { useEffect, useId, useRef, useState } from "react";
 
 // Address search combobox (docs/ARCHITECTURE-v2.md section 3). The client
@@ -212,6 +213,7 @@ export function LocationPicker({
 
   return (
     <div data-testid={`picker-${purpose}`}>
+      <p>In live mode, Geoapify receives your search text and the trip venue’s coordinates when available. For driving estimates, Geoapify receives the selected driver start, passenger pickup, and venue coordinates.</p>
       <label>
         {label}
         <input
@@ -243,6 +245,7 @@ export function LocationPicker({
             }}
           >
             {s.label} — {s.detail}
+            {s.selectable && provider?.name === "geoapify" ? " (approximate building location)" : ""}
             {s.selectable ? "" : ` (${s.precision} only: be more specific)`}
           </li>
         ))}
@@ -256,7 +259,7 @@ export function LocationPicker({
       {provider ? (
         <p data-testid="provider-attribution">
           {provider.name === "fixture" ? "Fixture data — fictional places. " : ""}
-          {provider.attribution}
+          <Attribution provider={provider.name} sources={[provider.attribution]} />
         </p>
       ) : null}
     </div>

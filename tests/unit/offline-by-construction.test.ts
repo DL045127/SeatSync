@@ -47,7 +47,7 @@ function sourceFiles(root: string): string[] {
 
 describe("the fixture path has no network capability", () => {
   const files = [
-    ...sourceFiles("src/locations"),
+    ...sourceFiles("src/locations").filter((file) => file !== "src/locations/geoapify.ts"),
     ...sourceFiles("src/routing").filter((file) => file !== "src/routing/geoapify.ts"),
     "src/matching/address.ts",
     "src/trips/address-evidence.ts",

@@ -6,6 +6,8 @@ import {
   fixturePlaces,
   type CatalogPlace,
 } from "./fixture-catalog.ts";
+import { classifyLocationQuery, normalizeLocationText, streetKey, withoutTrailingUnit } from "./house-number.ts";
+import { matchesPrimaryLine, matchesUsLocality } from "./us-locality.ts";
 import type { Precision } from "./snapshot.ts";
 
 export interface SearchCandidate {
@@ -48,12 +50,26 @@ function candidate(place: CatalogPlace): SearchCandidate {
   };
 }
 
-/** Every query token must occur in the place's label, street or city. */
+/** Free text searches the catalog. Qualified selections require the structured address. */
 export function fixtureSearch(input: SearchInput): SearchCandidate[] {
-  const wanted = tokens(input.query);
+  const query = classifyLocationQuery(input.query);
+  const wanted = tokens(input.query.split(",")[0]);
   if (wanted.length === 0) return [];
   const scored = fixturePlaces()
     .filter((place) => {
+      if (query.kind === "address") {
+        const address = classifyLocationQuery(place.street ?? "");
+        if (address.kind !== "address" || address.houseNumber !== query.houseNumber) return false;
+        if (!query.street) return true;
+        const expected = streetKey(address.street ?? "");
+        return !!expected && matchesPrimaryLine(query.street, query.locality, place,
+          street => streetKey(withoutTrailingUnit(street)) === expected);
+      }
+      if (query.locality && !matchesUsLocality(query.locality, place)) return false;
+      if (query.kind === "named") {
+        const label = normalizeLocationText(place.label);
+        return label === query.name || label.replace(/^groupride fixture — /, "") === query.name;
+      }
       const haystack = `${place.label} ${place.street ?? ""} ${place.city}`.toLowerCase();
       return wanted.every((token) => haystack.includes(token));
     })
