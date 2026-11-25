@@ -96,6 +96,10 @@ interface Snapshot {
 
 export default function TripPage({ params }: { params: Promise<{ tripId: string }> }) {
   const { tripId } = use(params);
+  return <TripDashboard key={tripId} tripId={tripId} />;
+}
+
+function TripDashboard({ tripId }: { tripId: string }) {
   // The storage probe runs once in the lazy initializer. On the server there is
   // no sessionStorage, so storageWritable() returns true optimistically; the
   // client value from this initializer is authoritative for actual blocking.
@@ -237,31 +241,37 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
     if (op) void sendMutation({ key: op.key, method: op.method, canonicalRoute: op.canonicalRoute, normalizedBody: op.normalizedBody });
   }
 
+  const inFlight = useRef<{ generation: number; controller: AbortController } | null>(null);
+  useEffect(() => () => inFlight.current?.controller.abort(), []);
+  useEffect(() => {
+    const active = inFlight.current;
+    if (active && active.generation !== state.previewGeneration) {
+      active.controller.abort();
+      inFlight.current = null;
+    }
+  }, [state.previewGeneration]);
+
   async function preview(): Promise<void> {
-    const previewGeneration = state.previewGeneration;
+    if (inFlight.current || state.pendingOperation) return;
+    const generation = state.previewGeneration + 1;
+    const controller = new AbortController();
+    inFlight.current = { generation, controller };
+    dispatch({ type: "preview/start" });
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]);
     try {
-      const res = await fetch(`/api/trips/${tripId}/match/preview`, { method: "POST", cache: "no-store" });
+      const res = await fetch(`/api/trips/${tripId}/match/preview`, { method: "POST", cache: "no-store", signal });
       if (!res.ok) {
-        // ISSUE-023: a stale/version preview error carries a newer version.
-        // Apply it to the floor IMMEDIATELY (clearing a now-stale preview and
-        // disabling Commit) BEFORE awaiting the refresh, so a failed refresh
-        // cannot leave an older plan committable.
-        const errBody = (await res.json().catch(() => ({}))) as { error?: { currentVersion?: number } };
-        if (typeof errBody.error?.currentVersion === "number") {
-          dispatch({ type: "version/observed", version: errBody.error.currentVersion });
-        }
-        setMessage("Preview rejected; refreshing current state.");
-        await refresh();
+        const body = await res.json().catch(() => ({}));
+        const version = body?.error?.currentVersion;
+        dispatch({ type: "preview/failed", generation, currentVersion: Number.isSafeInteger(version) ? version : undefined });
         return;
       }
       const body = (await res.json()) as PreviewPayload;
-      // The full payload is stored IN the reducer, so the rendered detail and
-      // the committable reference are always the same accepted object. A
-      // delayed/discarded preview that the reducer rejects therefore cannot
-      // replace the visible plan (ISSUE-023).
-      dispatch({ type: "preview/received", generation: previewGeneration, preview: body });
+      dispatch({ type: "preview/received", generation, preview: body });
     } catch {
-      setMessage("Preview failed. Retry.");
+      dispatch({ type: "preview/failed", generation });
+    } finally {
+      if (inFlight.current?.controller === controller) inFlight.current = null;
     }
   }
 
@@ -406,7 +416,9 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
 
           <section>
             <h2>Matching</h2>
-            <button disabled={!!pending} onClick={() => void preview()}>Preview</button>
+            <button disabled={!!pending || state.previewStatus === "pending"} onClick={() => void preview()}>
+              {state.previewStatus === "retry" ? "Retry preview" : "Preview"}
+            </button>
             <button disabled={!commitEnabled} onClick={commit}>
               Save plan (commit)
             </button>
@@ -454,7 +466,11 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
                 )}
               </div>
             ) : (
-              <p data-testid="preview-none">No current preview. Preview to review a plan, then save.</p>
+              <p role="status" data-testid="preview-none">
+                {state.previewStatus === "pending"
+                  ? snapshot.locationMode === "address" ? "Estimating pickup times…" : "Computing assignments…"
+                  : state.previewStatus === "retry" ? "Preview unavailable. Retry to review a plan." : "No current preview. Preview to review a plan, then save."}
+              </p>
             )}
           </section>
 

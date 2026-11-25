@@ -56,7 +56,7 @@ To open the app against your demo database, run `npm start` after building or us
 
 ### Address trips with the offline fixture (checkpoint A, verified)
 
-Address trips let an organizer search for a venue, driver start addresses and passenger pickup addresses, then preview, save and reload a plan whose costs are estimated extra driving time. This checkpoint runs entirely offline against a shipped catalog of **fictional** places and driving times ([data/fixture-places.json](data/fixture-places.json)): no account, API key, network or geocoder. Live search and routing are a later checkpoint.
+Address trips let an organizer search for a venue, driver start addresses and passenger pickup addresses, then preview, save and reload a plan whose costs are estimated extra driving time. This checkpoint runs entirely offline against a shipped catalog of **fictional** places and driving times ([data/fixture-places.json](data/fixture-places.json)): no account, API key, network or geocoder. Checkpoint C exercises the routing adapter on loopback. The live provider pilot belongs to D.
 
 1. Follow the standard setup above. No copied secret and no provider credentials are needed.
 2. Upgrade an existing database with `npm run db:migrate` (add `-- test` for the test database). It is additive: saved zone trips, plans, previews and receipts are unchanged. `npm run demo:reset` and `npm run demo` also apply it first.
@@ -72,6 +72,12 @@ For the verified expectations, try Event Hall (venue), a driver starting at *Dri
 After the first preview, later previews of the same trip **reuse the earlier driving times** and fetch only the legs still missing (the estimate reports how many were `fetched`, `reused` and `local`). A cancellation, withdrawal or seat change usually needs nothing new, and a driver who offers no seats keeps their earlier observations in case capacity returns. If a preview needs a leg it does not have while routing is unavailable, it returns `503 ROUTING_UNAVAILABLE` and publishes nothing; a preview whose legs are all known still works. Saved plans, stored previews and commits never need routing.
 
 Verified commands for this checkpoint (Node 24, the local test database): `npm run lint`, `npm run typecheck`, `npm run test:matching`, `npm run test:unit`, `npm run test:concurrency`, `npm run test:e2e`. [L-01–L-04 evidence](docs/EVIDENCE.md#checkpoint-a-closeout) · [L-05–L-12 evidence](docs/EVIDENCE.md#checkpoint-b-closeout)
+
+### Address preview checks on loopback (checkpoint C)
+
+With Node 24, PostgreSQL running and the designated `groupride_test` database free, run `npm run test:concurrency -- geoapify.integration` for the matrix adapter, concurrent previews and publication deadlines. The tests start their own counting HTTP stub with fictional coordinates and a dummy key. The ISSUE-076–081 cases cover successive edits, both publication orders for overlapping zero-seat previews, seat restoration with routing disabled, and recovery from a malformed provider retry date. `npm run test:e2e` builds the production app and exercises the organizer’s waiting, Retry and Save controls in Chromium.
+
+After the production build, `npm run eval:responsiveness -- --address` resets the designated test database and measures a separate trip’s GET/PATCH latency during 100 address previews. It writes [the L-17 results](eval/l17-responsiveness.json). For the interactive address demo, continue to select `fixture`. Live search and pilot setup are in checkpoint D.
 
 ## Demonstration (W3 workflow)
 

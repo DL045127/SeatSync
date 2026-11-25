@@ -14,6 +14,9 @@ import { normalizeUuid } from "../contracts/index.ts";
 import { classifyUnkeyedFailure } from "../db/classify.ts";
 import { assertDataset } from "../db/dataset.ts";
 import { datasetLock } from "../db/local-target.ts";
+import { PreviewDeadline } from "../db/deadline.ts";
+import { acquireRouting, observeVersion, retainForPublication, stale } from "./routing-permit.ts";
+import { identicalCoordinates, legKey, requiredPairs, retentionPairs } from "../matching/address.ts";
 import { withTransaction } from "../db/transaction.ts";
 import { addressProvider } from "../locations/config.ts";
 import {
@@ -243,7 +246,7 @@ async function readReuseCandidate(
   version: number,
   roster: AddressRoster,
   policyId: string,
-): Promise<Map<string, Leg> | undefined> {
+): Promise<Map<string, Leg> | null | undefined> {
   const row = await repo.findReuseCandidate(client, tripId, policyId, version);
   if (!row) return undefined;
   // A GENUINE legacy row is simply not a candidate: not a failure, and not a reason to reach for
@@ -260,7 +263,7 @@ async function readReuseCandidate(
     addressCounters.reuseCandidateDiscarded += 1;
     // Counts and the preview ID only: never an address, coordinate or name.
     console.error(`Discarded a corrupt routing-evidence candidate (preview ${row.id}); rebuilding every leg.`);
-    return undefined;
+    return null; // corrupt evidence requires a cold rebuild, including skipping in-flight handoff
   }
 }
 
@@ -272,9 +275,10 @@ async function readReuseCandidate(
 export async function publishPreview(
   pool: Pool,
   tripIdRaw: string,
+  deadline = new PreviewDeadline(),
 ): Promise<PreviewResponse> {
   try {
-    return await publishPreviewInner(pool, tripIdRaw);
+    return await deadline.wait(publishPreviewInner(pool, tripIdRaw, deadline));
   } catch (error) {
     throw classifyUnkeyedFailure(error);
   }
@@ -283,6 +287,7 @@ export async function publishPreview(
 async function publishPreviewInner(
   pool: Pool,
   tripIdRaw: string,
+  deadline: PreviewDeadline,
 ): Promise<PreviewResponse> {
   const tripId = normalizeUuid(tripIdRaw);
 
@@ -297,7 +302,7 @@ async function publishPreviewInner(
     let roster: Roster | undefined;
     let addressRoster: AddressRoster | undefined;
     let provider: ReturnType<typeof tripProvider> | undefined;
-    let candidate: Map<string, Leg> | undefined;
+    let candidate: Map<string, Leg> | null | undefined;
     let hit: ResponseContext | undefined;
     if (existing) {
       // A stored hit is judged against the roster at its version before it is served.
@@ -321,95 +326,162 @@ async function publishPreviewInner(
       }
     }
     return { version: trip.version, algorithm, existing, hit, roster, addressRoster, provider, candidate };
-  });
+  }, deadline);
 
+  const { addressRoster, provider, version } = snapshot;
+  const candidate = snapshot.candidate ?? new Map<string, Leg>();
+  const livePolicy = provider === "geoapify" ? routingPolicyFor(provider) : undefined;
+  const needsLive = livePolicy !== undefined && addressRoster && requiredPairs(addressRoster).some(
+    ({ from, to }) => !identicalCoordinates(from, to) && !candidate.has(legKey(from.id, to.id)),
+  );
+  // A covered solve can publish now, even when its retention set includes
+  // dormant legs from the old holder. Only upstream work requires a permit.
+  const immediate = observeVersion(tripId, version, needsLive || snapshot.candidate === null ? undefined : livePolicy);
   if (snapshot.existing) {
     recordPreview({ cacheHit: true, matcherMs: null });
     return toResponse(snapshot.existing, snapshot.hit!);
   }
 
-  // Step 2: compute optimal and greedy outside any lock; validated internally.
-  // An address preview first resolves its directed legs (the fixture adapter
-  // here), also outside any lock or transaction.
-  const matcherStart = performance.now();
-  let computation: { algorithmVersion: string; optimal: MatchingResult; greedy: MatchingResult };
-  let addressResult: AddressPreviewComputation | undefined;
-  if (snapshot.addressRoster) {
-    const provider = snapshot.provider!;
-    try {
-      addressResult = await computeAddressPreview(
-        snapshot.addressRoster,
-        {
-          provider,
-          policyId: routingPolicyFor(provider),
-          // Built lazily: a rematch that needs no new observation never touches routing,
-          // so it still publishes while routing is unavailable.
-          adapter: () => {
-            if (addressProvider() !== provider) {
-              throw new RoutingUnavailable("This trip's address provider is not available, so new driving times cannot be fetched.");
-            }
-            return routingAdapterFor(provider);
-          },
-        },
-        snapshot.candidate,
-      );
-    } catch (error) {
-      // An outage or a malformed matrix is a retryable availability failure that publishes nothing.
-      if (error instanceof RoutingUnavailable || error instanceof RoutingResultError) {
-        throw new TransientFailure("ROUTING_UNAVAILABLE", error.message, error);
+  const holder = needsLive ? await acquireRouting(tripId, version, livePolicy, deadline) : undefined;
+  let releasePublication: (() => void) | undefined;
+  try {
+    if (holder) {
+      // The first read may have preceded another holder's publication or a roster edit.
+      const winner = await withTransaction(pool, "read", async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
+        await assertDataset(client);
+        const trip = await repo.readTrip(client, tripId);
+        if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
+        if (trip.version !== version) throw stale(trip.version);
+        const row = await repo.findPreviewByKey(client, tripId, version, snapshot.algorithm);
+        if (row) return toResponse(row, {
+          facts: await repo.listParticipantFacts(client, tripId),
+          address: { provider: "geoapify", policyId: holder.policy },
+        });
+      }, deadline);
+      if (winner) {
+        recordPreview({ cacheHit: true, matcherMs: null });
+        return winner;
       }
-      throw error;
     }
-    computation = addressResult;
-  } else {
-    computation = computeMatch(projectMatchInput(snapshot.roster!));
-  }
-  recordPreview({ cacheHit: false, matcherMs: Number((performance.now() - matcherStart).toFixed(3)) });
-  if (computation.algorithmVersion !== snapshot.algorithm) {
-    // The computed identifier and the key looked up under the lock must agree.
-    throw new Error("Computed preview identifier does not match the trip's expected identifier.");
-  }
-
-  // Test-only barrier (C-13). Fires in the stale window AFTER the read snapshot
-  // and compute, BEFORE the publication lock, so a test can commit a roster
-  // mutation here and prove the version recheck below rejects and inserts no
-  // stale row. Never set by production code.
-  await publishBarrier();
-
-  // Step 3-4: lock the trip, recheck the version, then publish or reuse.
-  return withTransaction(pool, "write", async (client) => {
-    await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
-    await assertDataset(client);
-    const trip = await repo.lockTrip(client, tripId);
-    if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
-    if (trip.version !== snapshot.version) {
-      // The input changed while computing; do not publish a stale result.
-      throw new TerminalBusinessError(
-        409,
-        "STALE_VERSION",
-        "The trip changed during preview computation; refresh and retry.",
-        { currentVersion: trip.version },
-      );
+    const settled = holder?.settled ?? immediate;
+    if (settled?.size && addressRoster) {
+      if (snapshot.candidate === null) {
+        settled.clear(); // a corrupt reuse candidate requires a fully cold attempt
+      } else {
+        const retained = new Set(retentionPairs(addressRoster).map(({ from, to }) => legKey(from.id, to.id)));
+        for (const [key, leg] of settled) {
+          if (candidate.has(key) || !retained.has(key)) settled.delete(key);
+          else candidate.set(key, leg);
+        }
+        if (immediate?.size && livePolicy) {
+          releasePublication = retainForPublication(tripId, version, livePolicy, immediate);
+        }
+      }
     }
-    // Recheck the unique key: another request may have published concurrently.
-    const concurrent = await repo.findPreviewByKey(client, tripId, trip.version, snapshot.algorithm);
-    const preview = concurrent ?? (await repo.insertPreview(client, {
-      tripId,
-      baseVersion: trip.version,
-      algorithmVersion: computation.algorithmVersion,
-      optimalResult: computation.optimal,
-      greedyResult: computation.greedy,
-      address: addressResult && {
-        routingPolicy: addressResult.evidence.policy,
-        summary: addressResult.summary,
-        evidence: addressResult.evidence,
-      },
-    }));
-    // Whether inserted just now or published by a concurrent request, the row is checked the
-    // same way before it is returned.
-    return toResponse(preview, {
-      facts: await repo.listParticipantFacts(client, tripId),
-      address: snapshot.provider ? { provider: snapshot.provider, policyId: routingPolicyFor(snapshot.provider) } : undefined,
-    });
-  });
+    const controller = holder?.controller;
+    const routingSignal = controller ? AbortSignal.any([
+      controller.signal, deadline.signal, AbortSignal.timeout(Math.max(1, deadline.remaining() - 100)),
+    ]) : deadline.signal;
+    controller?.signal.throwIfAborted();
+    deadline.remaining();
+    let matcherMs: number;
+    let computation: { algorithmVersion: string; optimal: MatchingResult; greedy: MatchingResult };
+    let addressResult: AddressPreviewComputation | undefined;
+    if (snapshot.addressRoster) {
+      const provider = snapshot.provider!;
+      try {
+        addressResult = await computeAddressPreview(
+          snapshot.addressRoster,
+          {
+            provider,
+            signal: routingSignal,
+            settled: holder?.settled,
+            policyId: routingPolicyFor(provider),
+            // Built lazily: a rematch that needs no new observation never touches routing,
+            // so it still publishes while routing is unavailable.
+            adapter: () => {
+              if (addressProvider() !== provider) {
+                throw new RoutingUnavailable("This trip's address provider is not available, so new driving times cannot be fetched.");
+              }
+              return routingAdapterFor(provider);
+            },
+          },
+          candidate,
+        );
+      } catch (error) {
+        controller?.signal.throwIfAborted();
+        if (routingSignal.aborted) throw new TransientFailure("ROUTING_UNAVAILABLE", "The driving-time request timed out.");
+        // An outage or a malformed matrix is a retryable availability failure that publishes nothing.
+        if (error instanceof RoutingUnavailable || error instanceof RoutingResultError) {
+          const retry = error instanceof RoutingUnavailable ? error.retryAfterSeconds : undefined;
+          throw new TransientFailure("ROUTING_UNAVAILABLE", error.message, error, retry);
+        }
+        throw error;
+      }
+      computation = addressResult;
+      matcherMs = addressResult.matcherMs;
+    } else {
+      const start = performance.now();
+      computation = computeMatch(projectMatchInput(snapshot.roster!));
+      matcherMs = performance.now() - start;
+    }
+    controller?.signal.throwIfAborted();
+    deadline.remaining();
+    recordPreview({ cacheHit: false, matcherMs: Number(matcherMs.toFixed(3)) });
+    if (computation.algorithmVersion !== snapshot.algorithm) {
+      // The computed identifier and the key looked up under the lock must agree.
+      throw new Error("Computed preview identifier does not match the trip's expected identifier.");
+    }
+
+    // Test-only barrier (C-13). Fires in the stale window AFTER the read snapshot
+    // and compute, BEFORE the publication lock, so a test can commit a roster
+    // mutation here and prove the version recheck below rejects and inserts no
+    // stale row. Never set by production code.
+    await deadline.wait(publishBarrier());
+    controller?.signal.throwIfAborted();
+
+    // Step 3-4: lock the trip, recheck the version, then publish or reuse.
+    return await withTransaction(pool, "write", async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
+      await assertDataset(client);
+      const trip = await repo.lockTrip(client, tripId);
+      if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
+      if (trip.version !== snapshot.version) {
+        // The input changed while computing; do not publish a stale result.
+        throw new TerminalBusinessError(
+          409,
+          "STALE_VERSION",
+          "The trip changed during preview computation; refresh and retry.",
+          { currentVersion: trip.version },
+        );
+      }
+      if (expectedAlgorithm(trip) !== snapshot.algorithm) {
+        throw new TerminalBusinessError(409, "ALGORITHM_CHANGED", "The routing policy changed. Retry the preview.");
+      }
+      // Recheck the unique key: another request may have published concurrently.
+      const concurrent = await repo.findPreviewByKey(client, tripId, trip.version, snapshot.algorithm);
+      const preview = concurrent ?? (await repo.insertPreview(client, {
+        tripId,
+        baseVersion: trip.version,
+        algorithmVersion: computation.algorithmVersion,
+        optimalResult: computation.optimal,
+        greedyResult: computation.greedy,
+        address: addressResult && {
+          routingPolicy: addressResult.evidence.policy,
+          summary: addressResult.summary,
+          evidence: addressResult.evidence,
+        },
+      }));
+      // Whether inserted just now or published by a concurrent request, the row is checked the
+      // same way before it is returned.
+      return toResponse(preview, {
+        facts: await repo.listParticipantFacts(client, tripId),
+        address: snapshot.provider ? { provider: snapshot.provider, policyId: routingPolicyFor(snapshot.provider) } : undefined,
+      });
+    }, deadline);
+  } finally {
+    releasePublication?.();
+    holder?.release();
+  }
 }

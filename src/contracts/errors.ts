@@ -18,6 +18,8 @@ export type ErrorCode =
   | "LOCATION_MODE_MISMATCH"
   | "SELECTION_KEY_UNAVAILABLE"
   | "ADDRESS_PROVIDER_UNAVAILABLE"
+  | "PREVIEW_BUSY"
+  | "ROUTING_QUOTA"
   | "ROUTING_UNAVAILABLE"
   | "CROSS_SITE_REQUEST"
   | "INTERNAL_ERROR";
@@ -91,11 +93,14 @@ export class TransientFailure extends Error {
     | "DATABASE_UNAVAILABLE"
     | "SELECTION_KEY_UNAVAILABLE"
     | "ADDRESS_PROVIDER_UNAVAILABLE"
+    | "ROUTING_QUOTA"
     | "ROUTING_UNAVAILABLE"
   >;
-  constructor(code: TransientFailure["code"], message: string, cause?: unknown) {
+  readonly retryAfterSeconds?: number;
+  constructor(code: TransientFailure["code"], message: string, cause?: unknown, retryAfterSeconds?: number) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "TransientFailure";
+    this.retryAfterSeconds = retryAfterSeconds;
     this.code = code;
   }
 }

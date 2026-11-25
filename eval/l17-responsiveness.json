@@ -1,0 +1,2081 @@
+{
+  "experiment": "L-17 address fixture responsiveness",
+  "addressSamples": [
+    {
+      "ms": 44.84150000000045,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 1070,
+        "reused": 0,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 52.24474999999984,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 46.8887079999995,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 46.138708000000406,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 60.833332999999584,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 58.017791999999645,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 45.566665999999714,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.1185830000004,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.79283399999986,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 46.13000000000011,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 46.84416699999929,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.60095799999999,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.65845799999988,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 49.28949999999986,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 47.26420800000051,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.626624999999876,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.16508299999987,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.31825000000026,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.25616699999955,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.70575000000008,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.38604100000066,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.35237499999948,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.57245799999964,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.20049999999992,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.73924999999963,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.253584000000046,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.959875000000466,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.50783300000057,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.193334000000505,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.371083,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 47.05470800000057,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.19704199999978,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.19379199999912,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.39000000000033,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.172999999999774,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.438500000000204,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.44695800000045,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.887792000000445,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 48.00337500000023,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 46.413291999999274,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.94420899999932,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 50.332792000000154,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 49.07283300000017,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 48.71545900000001,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.97845899999993,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 52.468041000000085,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.59699999999975,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 45.77579100000003,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.66645799999969,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.5385839999999,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.628082999999606,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 47.88183299999946,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.85691600000064,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.222334000000046,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.15029200000026,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.53129199999967,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.816499999998996,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.4307919999992,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.17716599999949,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 47.06316700000025,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.201750000000175,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.18995899999936,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.28508300000067,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.74866700000166,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.27983400000085,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.97570799999994,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 45.35204199999862,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.242083000001,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.27941700000156,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 45.4268749999992,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 55.89249999999993,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.873499999999694,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 45.50183300000026,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.504791999999725,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.60483299999942,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.12233300000116,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.00708300000042,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.56841700000041,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.8145829999994,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.259125000000495,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.34454200000073,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.54266699999971,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.29583300000013,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.48845899999833,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.89129200000025,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.70162500000151,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.31775000000016,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.62275000000045,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.4163750000007,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 46.23054100000081,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 44.41308299999946,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.42858399999932,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.92179099999885,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.870208000000275,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 43.27662500000042,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.517791999998735,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.04712500000096,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.929667000000336,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 41.48795799999971,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    },
+    {
+      "ms": 42.715917000001355,
+      "provider": "fixture",
+      "legs": {
+        "required": 1070,
+        "fetched": 0,
+        "reused": 1070,
+        "local": 0
+      },
+      "matched": 50,
+      "cost": 11500
+    }
+  ],
+  "addressVerified": true,
+  "sourceState": "M README.md\n M WORKPLAN.md\n M docs/ARCHITECTURE-v2.md\n M docs/EVIDENCE.md\n M scripts/eval-responsiveness.ts\n M src/app/api/http.ts\n M src/app/trips/[tripId]/page.tsx\n M src/app/trips/reducer.ts\n M src/contracts/errors.ts\n M src/db/transaction.ts\n M src/routing/adapter.ts\n M src/routing/index.ts\n M src/trips/address-preview.ts\n M src/trips/preview.ts\n M tests/e2e/address.spec.ts\n M tests/unit/offline-by-construction.test.ts\n M tests/unit/reducer.test.ts\n?? eval/l17-responsiveness.json\n?? src/db/deadline.ts\n?? src/routing/geoapify.ts\n?? src/routing/matrix.ts\n?? src/trips/routing-permit.ts\n?? tests/concurrency/geoapify.integration.test.ts\n?? tests/unit/matrix-batches.test.ts\n?? tests/unit/routing-permit.test.ts",
+  "measuredClient": "competing GET/PATCH on a separate trip (the gate client)",
+  "load": "concurrent uncached maximum-size previews on a separate trip (exactly PREVIEW_COUNT, all fresh)",
+  "node": "v24.22.3",
+  "platform": "darwin arm64",
+  "commit": "8ece0673f66e05c9f4e01034d275ea2f63d2e2c8",
+  "build": "production (next start)",
+  "deadlineMs": 2000,
+  "control": "none",
+  "measuredWindowMs": 5421.8,
+  "previewTrip": {
+    "persistedDrivers": 20,
+    "persistedPassengers": 50,
+    "rosterIsMax": true,
+    "requiredUncachedPreviews": 100,
+    "attempts": 100,
+    "distinctServed": 100,
+    "cacheHits": 0,
+    "computed": 100,
+    "finiteMatcherDurations": 100
+  },
+  "competeTrip": {
+    "workloadPerPhase": "100 iterations of GET then PATCH",
+    "underLoadSamplesInWindow": 475,
+    "competingStartedTotal": 600,
+    "competingAfterWindow": 125
+  },
+  "generatedAt": "2026-11-25T01:57:21.005Z",
+  "idle": {
+    "total": 200,
+    "successful": 200,
+    "errors": 0,
+    "timeouts": 0,
+    "get": 100,
+    "patch": 100,
+    "medianMs": 8.5,
+    "p95Ms": 10.3,
+    "rawMs": [
+      6.04,
+      6.04,
+      6.15,
+      6.19,
+      6.33,
+      6.35,
+      6.35,
+      6.39,
+      6.39,
+      6.4,
+      6.4,
+      6.4,
+      6.47,
+      6.48,
+      6.49,
+      6.52,
+      6.53,
+      6.53,
+      6.53,
+      6.55,
+      6.59,
+      6.6,
+      6.61,
+      6.61,
+      6.63,
+      6.63,
+      6.65,
+      6.67,
+      6.67,
+      6.68,
+      6.68,
+      6.7,
+      6.71,
+      6.71,
+      6.72,
+      6.72,
+      6.72,
+      6.75,
+      6.76,
+      6.76,
+      6.77,
+      6.77,
+      6.78,
+      6.79,
+      6.79,
+      6.81,
+      6.81,
+      6.83,
+      6.87,
+      6.88,
+      6.89,
+      6.9,
+      6.91,
+      6.93,
+      6.94,
+      6.94,
+      6.97,
+      6.98,
+      6.98,
+      6.99,
+      6.99,
+      6.99,
+      7,
+      7,
+      7.04,
+      7.04,
+      7.06,
+      7.09,
+      7.09,
+      7.11,
+      7.16,
+      7.17,
+      7.18,
+      7.2,
+      7.22,
+      7.23,
+      7.26,
+      7.28,
+      7.29,
+      7.3,
+      7.32,
+      7.36,
+      7.37,
+      7.38,
+      7.38,
+      7.4,
+      7.41,
+      7.44,
+      7.48,
+      7.49,
+      7.49,
+      7.53,
+      7.75,
+      7.76,
+      7.8,
+      7.88,
+      8,
+      8.12,
+      8.49,
+      8.53,
+      8.53,
+      8.56,
+      8.56,
+      8.56,
+      8.62,
+      8.72,
+      8.73,
+      8.73,
+      8.74,
+      8.74,
+      8.76,
+      8.77,
+      8.8,
+      8.8,
+      8.81,
+      8.84,
+      8.87,
+      8.95,
+      8.98,
+      9,
+      9,
+      9,
+      9.02,
+      9.02,
+      9.04,
+      9.08,
+      9.12,
+      9.13,
+      9.17,
+      9.17,
+      9.18,
+      9.2,
+      9.2,
+      9.22,
+      9.23,
+      9.24,
+      9.25,
+      9.26,
+      9.26,
+      9.26,
+      9.27,
+      9.27,
+      9.28,
+      9.28,
+      9.3,
+      9.3,
+      9.3,
+      9.33,
+      9.33,
+      9.33,
+      9.34,
+      9.35,
+      9.35,
+      9.39,
+      9.42,
+      9.45,
+      9.45,
+      9.48,
+      9.48,
+      9.49,
+      9.49,
+      9.5,
+      9.51,
+      9.55,
+      9.57,
+      9.57,
+      9.58,
+      9.58,
+      9.63,
+      9.65,
+      9.67,
+      9.68,
+      9.69,
+      9.75,
+      9.76,
+      9.77,
+      9.79,
+      9.79,
+      9.82,
+      9.84,
+      9.86,
+      9.9,
+      9.9,
+      9.92,
+      9.93,
+      9.94,
+      9.95,
+      10.09,
+      10.28,
+      10.31,
+      10.35,
+      10.44,
+      10.67,
+      10.78,
+      10.82,
+      11.11,
+      11.14,
+      11.36,
+      11.71,
+      12.23
+    ]
+  },
+  "competing": {
+    "total": 475,
+    "successful": 475,
+    "errors": 0,
+    "timeouts": 0,
+    "get": 238,
+    "patch": 237,
+    "medianMs": 9.2,
+    "p95Ms": 23.2,
+    "rawMs": [
+      6.06,
+      6.13,
+      6.2,
+      6.21,
+      6.21,
+      6.22,
+      6.27,
+      6.28,
+      6.31,
+      6.32,
+      6.33,
+      6.34,
+      6.34,
+      6.35,
+      6.35,
+      6.36,
+      6.42,
+      6.45,
+      6.47,
+      6.48,
+      6.54,
+      6.55,
+      6.55,
+      6.55,
+      6.55,
+      6.59,
+      6.59,
+      6.6,
+      6.61,
+      6.62,
+      6.63,
+      6.64,
+      6.64,
+      6.65,
+      6.65,
+      6.66,
+      6.66,
+      6.67,
+      6.68,
+      6.68,
+      6.69,
+      6.69,
+      6.71,
+      6.71,
+      6.73,
+      6.73,
+      6.75,
+      6.75,
+      6.76,
+      6.78,
+      6.79,
+      6.8,
+      6.8,
+      6.84,
+      6.84,
+      6.84,
+      6.85,
+      6.85,
+      6.85,
+      6.86,
+      6.86,
+      6.86,
+      6.87,
+      6.87,
+      6.87,
+      6.88,
+      6.89,
+      6.89,
+      6.89,
+      6.9,
+      6.91,
+      6.91,
+      6.91,
+      6.92,
+      6.92,
+      6.92,
+      6.93,
+      6.96,
+      6.97,
+      6.97,
+      6.98,
+      6.98,
+      6.99,
+      6.99,
+      7,
+      7.01,
+      7.02,
+      7.03,
+      7.03,
+      7.04,
+      7.06,
+      7.06,
+      7.08,
+      7.08,
+      7.09,
+      7.11,
+      7.13,
+      7.14,
+      7.14,
+      7.15,
+      7.15,
+      7.17,
+      7.18,
+      7.19,
+      7.19,
+      7.19,
+      7.21,
+      7.22,
+      7.23,
+      7.23,
+      7.25,
+      7.26,
+      7.27,
+      7.29,
+      7.3,
+      7.33,
+      7.34,
+      7.37,
+      7.38,
+      7.4,
+      7.42,
+      7.45,
+      7.46,
+      7.46,
+      7.47,
+      7.48,
+      7.49,
+      7.5,
+      7.51,
+      7.54,
+      7.54,
+      7.54,
+      7.58,
+      7.59,
+      7.61,
+      7.63,
+      7.64,
+      7.64,
+      7.64,
+      7.67,
+      7.67,
+      7.68,
+      7.71,
+      7.71,
+      7.71,
+      7.71,
+      7.74,
+      7.76,
+      7.77,
+      7.78,
+      7.82,
+      7.84,
+      7.85,
+      7.85,
+      7.86,
+      7.89,
+      7.9,
+      8,
+      8,
+      8.02,
+      8.03,
+      8.05,
+      8.06,
+      8.07,
+      8.08,
+      8.09,
+      8.16,
+      8.16,
+      8.21,
+      8.27,
+      8.28,
+      8.28,
+      8.29,
+      8.32,
+      8.35,
+      8.36,
+      8.38,
+      8.49,
+      8.5,
+      8.52,
+      8.55,
+      8.56,
+      8.57,
+      8.6,
+      8.6,
+      8.63,
+      8.64,
+      8.66,
+      8.67,
+      8.67,
+      8.68,
+      8.7,
+      8.72,
+      8.73,
+      8.73,
+      8.73,
+      8.73,
+      8.74,
+      8.77,
+      8.84,
+      8.85,
+      8.86,
+      8.87,
+      8.87,
+      8.87,
+      8.87,
+      8.87,
+      8.92,
+      8.92,
+      8.93,
+      8.93,
+      8.94,
+      8.94,
+      8.94,
+      8.95,
+      8.98,
+      9,
+      9,
+      9,
+      9.01,
+      9.02,
+      9.03,
+      9.05,
+      9.06,
+      9.08,
+      9.09,
+      9.12,
+      9.13,
+      9.14,
+      9.14,
+      9.15,
+      9.16,
+      9.16,
+      9.16,
+      9.17,
+      9.17,
+      9.19,
+      9.19,
+      9.2,
+      9.21,
+      9.21,
+      9.23,
+      9.27,
+      9.27,
+      9.28,
+      9.3,
+      9.31,
+      9.32,
+      9.32,
+      9.35,
+      9.36,
+      9.4,
+      9.4,
+      9.44,
+      9.44,
+      9.47,
+      9.5,
+      9.5,
+      9.5,
+      9.51,
+      9.51,
+      9.52,
+      9.53,
+      9.54,
+      9.54,
+      9.54,
+      9.55,
+      9.55,
+      9.57,
+      9.58,
+      9.59,
+      9.6,
+      9.61,
+      9.64,
+      9.65,
+      9.67,
+      9.73,
+      9.76,
+      9.78,
+      9.8,
+      9.83,
+      9.83,
+      9.84,
+      9.85,
+      9.86,
+      9.87,
+      9.88,
+      9.89,
+      9.9,
+      9.91,
+      9.93,
+      9.95,
+      9.97,
+      9.97,
+      9.99,
+      10,
+      10.01,
+      10.01,
+      10.04,
+      10.05,
+      10.06,
+      10.09,
+      10.1,
+      10.12,
+      10.16,
+      10.17,
+      10.23,
+      10.24,
+      10.25,
+      10.26,
+      10.27,
+      10.29,
+      10.3,
+      10.32,
+      10.32,
+      10.36,
+      10.36,
+      10.38,
+      10.39,
+      10.39,
+      10.4,
+      10.42,
+      10.49,
+      10.5,
+      10.51,
+      10.52,
+      10.52,
+      10.52,
+      10.57,
+      10.58,
+      10.58,
+      10.61,
+      10.7,
+      10.71,
+      10.74,
+      10.75,
+      10.82,
+      10.86,
+      10.98,
+      10.99,
+      11.06,
+      11.08,
+      11.09,
+      11.18,
+      11.26,
+      11.28,
+      11.35,
+      11.47,
+      11.54,
+      11.68,
+      11.75,
+      11.81,
+      11.85,
+      11.87,
+      11.96,
+      12.02,
+      12.08,
+      12.12,
+      12.3,
+      12.48,
+      12.63,
+      12.82,
+      12.87,
+      12.97,
+      13.15,
+      13.16,
+      13.2,
+      13.66,
+      13.68,
+      13.8,
+      14.35,
+      14.37,
+      14.47,
+      14.7,
+      14.73,
+      14.82,
+      15.45,
+      15.86,
+      15.92,
+      16.09,
+      16.21,
+      16.55,
+      17.6,
+      18.16,
+      18.3,
+      18.35,
+      18.36,
+      18.49,
+      18.5,
+      18.55,
+      18.62,
+      18.69,
+      18.89,
+      18.98,
+      19.05,
+      19.14,
+      19.19,
+      19.22,
+      19.4,
+      19.43,
+      19.57,
+      19.67,
+      19.72,
+      19.72,
+      19.82,
+      19.94,
+      20,
+      20,
+      20.01,
+      20.13,
+      20.18,
+      20.18,
+      20.26,
+      20.37,
+      20.39,
+      20.52,
+      20.67,
+      20.8,
+      20.85,
+      20.88,
+      21.02,
+      21.05,
+      21.15,
+      21.41,
+      21.43,
+      21.46,
+      21.59,
+      21.64,
+      21.68,
+      21.72,
+      21.78,
+      21.8,
+      21.8,
+      21.92,
+      21.92,
+      21.99,
+      22.04,
+      22.07,
+      22.15,
+      22.37,
+      22.41,
+      22.48,
+      22.51,
+      22.52,
+      22.59,
+      22.67,
+      22.82,
+      22.84,
+      22.87,
+      22.88,
+      23.03,
+      23.16,
+      23.22,
+      23.23,
+      23.3,
+      23.39,
+      23.42,
+      23.42,
+      23.47,
+      23.48,
+      23.55,
+      23.63,
+      23.67,
+      23.78,
+      23.82,
+      24.19,
+      24.6,
+      24.73,
+      25.06,
+      25.6,
+      26.34,
+      26.57,
+      26.66,
+      28.23,
+      28.99
+    ]
+  },
+  "previewLoad": {
+    "total": 100,
+    "successful": 100,
+    "errors": 0,
+    "timeouts": 0,
+    "get": 0,
+    "patch": 0,
+    "medianMs": 43.7,
+    "p95Ms": 50.3,
+    "rawMs": [
+      41.12,
+      41.19,
+      41.26,
+      41.49,
+      41.52,
+      41.54,
+      41.62,
+      41.87,
+      41.89,
+      41.93,
+      42.05,
+      42.15,
+      42.17,
+      42.2,
+      42.24,
+      42.3,
+      42.32,
+      42.35,
+      42.37,
+      42.43,
+      42.43,
+      42.51,
+      42.53,
+      42.54,
+      42.57,
+      42.57,
+      42.7,
+      42.72,
+      42.74,
+      42.81,
+      42.87,
+      43.01,
+      43.17,
+      43.18,
+      43.19,
+      43.2,
+      43.22,
+      43.28,
+      43.28,
+      43.34,
+      43.39,
+      43.44,
+      43.45,
+      43.49,
+      43.5,
+      43.6,
+      43.6,
+      43.66,
+      43.71,
+      43.75,
+      43.79,
+      43.82,
+      43.92,
+      43.94,
+      43.96,
+      43.98,
+      44.12,
+      44.19,
+      44.2,
+      44.25,
+      44.26,
+      44.28,
+      44.29,
+      44.32,
+      44.39,
+      44.41,
+      44.42,
+      44.6,
+      44.63,
+      44.63,
+      44.67,
+      44.84,
+      44.86,
+      44.89,
+      44.98,
+      45.35,
+      45.43,
+      45.5,
+      45.57,
+      45.78,
+      46.13,
+      46.14,
+      46.23,
+      46.41,
+      46.84,
+      46.89,
+      47.05,
+      47.06,
+      47.26,
+      47.88,
+      48,
+      48.72,
+      49.07,
+      49.29,
+      50.33,
+      52.24,
+      52.47,
+      55.89,
+      58.02,
+      60.83
+    ]
+  },
+  "increaseOverIdleP95Ms": 12.9,
+  "serverTelemetry": {
+    "previewRecords": 100,
+    "cacheHits": 0,
+    "computed": 100,
+    "matcherMs": {
+      "p50": 2.855,
+      "p95": 3.619,
+      "samples": 100
+    },
+    "eventLoopDelayMs": {
+      "p50": 10.027,
+      "p95": 15.057,
+      "max": 22.757
+    }
+  },
+  "gates": {
+    "competingP95MaxMs": 500,
+    "increaseOverIdleP95MaxMs": 250
+  },
+  "checks": {
+    "competingHaveSamples": true,
+    "competingNoErrors": true,
+    "competingNoTimeouts": true,
+    "competingAllSucceeded": true,
+    "previewExactAttempts": true,
+    "previewAllDistinct": true,
+    "previewNoFailures": true,
+    "previewNoCacheHits": true,
+    "previewFullyComputed": true,
+    "everyComputeTimed": true,
+    "telemetryPresent": true,
+    "rosterIsMax": true,
+    "gatesMet": true
+  },
+  "pass": true
+}

@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { type PreviewDeadline } from "./deadline.ts";
 import { classifyCommitFailure, sqlState } from "./commit-outcome.ts";
 
 /**
@@ -62,20 +63,68 @@ export function __setTransactionCommitFaultHook(
   };
 }
 
-export function withTransaction<T>(
+/** Cap each potentially blocking statement by the remaining absolute budget. */
+async function setRemainingTimeouts(client: PoolClient, deadline: PreviewDeadline) {
+  const ms = deadline.remaining();
+  await client.query(
+    "SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)",
+    [String(Math.min(2000, ms)), String(Math.min(5000, ms))],
+  );
+  deadline.remaining();
+}
+
+function boundedClient(client: PoolClient, deadline: PreviewDeadline): PoolClient {
+  // A repository may start several reads with Promise.all on the same client.
+  // Serialize each timeout-setting query with its own work statement.
+  let previous: Promise<unknown> = Promise.resolve();
+  const bounded = Object.create(client) as PoolClient;
+  bounded.query = ((sql: string, args?: unknown[]) => {
+    const next = previous.then(async () => {
+      await setRemainingTimeouts(client, deadline);
+      return client.query(sql, args);
+    });
+    previous = next;
+    return next;
+  }) as PoolClient["query"];
+  return bounded;
+}
+
+export async function withTransaction<T>(
   pool: Pool,
   mode: "read" | "write",
   work: (client: PoolClient) => Promise<T>,
+  deadline?: PreviewDeadline,
 ): Promise<T> {
-  return runTransaction(pool, mode, work);
+  deadline?.remaining();
+  const acquiring = pool.connect().then((client) => {
+    try {
+      deadline?.remaining();
+      return client;
+    } catch (error) {
+      client.release();
+      throw error;
+    }
+  });
+  const client = await (deadline ? deadline.wait(acquiring) : acquiring);
+  let released = false;
+  const release = (discard: boolean) => {
+    if (released) return;
+    released = true;
+    client.release(discard);
+  };
+  const workDone = runTransaction(client, mode, work, release, deadline);
+  // An expired connection is removed from the pool immediately. pg closes
+  // its socket, including an in-flight statement or uncertain COMMIT.
+  return deadline ? deadline.wait(workDone, () => release(true)) : workDone;
 }
 
 async function runTransaction<T>(
-  pool: Pool,
+  client: PoolClient,
   mode: "read" | "write",
   work: (client: PoolClient) => Promise<T>,
+  release: (discard: boolean) => void,
+  deadline?: PreviewDeadline,
 ): Promise<T> {
-  const client = await pool.connect();
   let discard = false;
   let connectionError: Error | undefined;
   const onError = (error: Error) => { connectionError = error; };
@@ -95,10 +144,11 @@ async function runTransaction<T>(
       await client.query("SET LOCAL lock_timeout = '2s'");
       await client.query("SET LOCAL statement_timeout = '5s'");
       await client.query("SET LOCAL idle_in_transaction_session_timeout = '5s'");
-      result = await work(client);
+      result = await work(deadline ? boundedClient(client, deadline) : client);
       if (connectionError) throw connectionError;
     } catch (error) {
       try {
+        deadline?.remaining();
         await client.query("ROLLBACK");
       } catch {
         discard = true;
@@ -114,6 +164,7 @@ async function runTransaction<T>(
         await commitFaultHook(client);
       } catch (error) {
         try {
+          deadline?.remaining();
           await client.query("ROLLBACK");
         } catch {
           discard = true;
@@ -122,6 +173,15 @@ async function runTransaction<T>(
       }
     }
 
+    if (deadline) {
+      try {
+        await setRemainingTimeouts(client, deadline);
+      } catch (error) {
+        // No COMMIT has been sent. Close the open transaction with the client.
+        discard = true;
+        throw error;
+      }
+    }
     let command: string;
     try {
       ({ command } = await client.query("COMMIT"));
@@ -144,6 +204,6 @@ async function runTransaction<T>(
     return result;
   } finally {
     client.off("error", onError);
-    client.release(discard || connectionError !== undefined);
+    release(discard || connectionError !== undefined);
   }
 }

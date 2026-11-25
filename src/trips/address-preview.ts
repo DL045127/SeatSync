@@ -35,6 +35,8 @@ export interface LegSource {
   provider: ProviderName;
   policyId: string;
   adapter: () => RoutingAdapter;
+  signal?: AbortSignal;
+  settled?: Map<string, Leg>;
 }
 
 export interface AddressPreviewComputation {
@@ -45,6 +47,7 @@ export interface AddressPreviewComputation {
   summary: EstimateSummary;
   /** Provider cells requested for this preview (zero when everything was carried or local). */
   fetchedCells: number;
+  matcherMs: number;
 }
 
 export async function computeAddressPreview(
@@ -81,7 +84,18 @@ export async function computeAddressPreview(
   // Never fetch to fill a dormant driver's row: only REQUIRED legs reach here.
   if (toFetch.length > 0) {
     const adapter = source.adapter();
-    const cells = validateCells(await adapter.fetchLegs(toFetch), toFetch.length);
+    const batchTimes = new Map<number, string>();
+    const cells = validateCells(await adapter.fetchLegs(toFetch, {
+      venueId: roster.venue.id,
+      signal: source.signal,
+      onObservation: (index, seconds, observedAt) => {
+        batchTimes.set(index, observedAt);
+        const { from, to } = toFetch[index];
+        source.settled?.set(legKey(from.id, to.id), {
+          from: from.id, to: to.id, seconds, observedAt, source: "provider",
+        });
+      },
+    }), toFetch.length);
     const observedAt = now().toISOString();
     toFetch.forEach((pair, index) => {
       legs.set(legKey(pair.from.id, pair.to.id), {
@@ -89,14 +103,17 @@ export async function computeAddressPreview(
         to: pair.to.id,
         seconds: cells[index],
         source: "provider",
-        observedAt,
+        observedAt: batchTimes.get(index) ?? observedAt,
       });
     });
   }
 
   const { input, stats } = projectAddressMatchInput(roster, legs);
   addressCounters.negativeDetourClamped += stats.clampedNegative;
+  source.signal?.throwIfAborted();
+  const start = performance.now();
   const computed = computeMatch(input);
+  const matcherMs = performance.now() - start;
   const evidence = buildEvidence(roster, source.policyId, legs);
   const requiredLegs = required.map((pair) => legs.get(legKey(pair.from.id, pair.to.id))!);
   const summary = buildSummary(source.provider, source.policyId, requiredLegs, {
@@ -110,5 +127,6 @@ export async function computeAddressPreview(
     evidence,
     summary,
     fetchedCells: toFetch.length,
+    matcherMs,
   };
 }

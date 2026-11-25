@@ -34,6 +34,7 @@ export interface TripState {
   highestObservedVersion: number; // the version floor
   readGeneration: number;
   previewGeneration: number;
+  previewStatus: "idle" | "pending" | "retry";
   pendingOperation: PendingOperation | null;
 }
 
@@ -45,6 +46,7 @@ export function initialState(tripId: string): TripState {
     highestObservedVersion: 0,
     readGeneration: 0,
     previewGeneration: 0,
+    previewStatus: "idle",
     pendingOperation: null,
   };
 }
@@ -52,6 +54,8 @@ export function initialState(tripId: string): TripState {
 export type TripAction =
   // A GET read returned for a specific read generation.
   | { type: "get/received"; generation: number; snapshot: TripSnapshotView }
+  | { type: "preview/start" }
+  | { type: "preview/failed"; generation: number; currentVersion?: number }
   // A preview returned for a specific preview generation.
   | { type: "preview/received"; generation: number; preview: PreviewView }
   // Start a new GET: bump the read generation (older GETs become obsolete).
@@ -100,7 +104,28 @@ function reconcile(
 }
 
 export function tripReducer(state: TripState, action: TripAction): TripState {
+  const next = reduceTrip(state, action);
+  // Learning a newer roster version supersedes outstanding work in the same
+  // transition that removes its saveable preview.
+  if (next.highestObservedVersion > state.highestObservedVersion && state.previewStatus === "pending") {
+    return { ...next, previewGeneration: next.previewGeneration + 1,
+      previewStatus: next.previewStatus === "retry" ? "retry" : "idle" };
+  }
+  return next;
+}
+
+function reduceTrip(state: TripState, action: TripAction): TripState {
   switch (action.type) {
+    case "preview/start":
+      return { ...state, preview: null, previewStatus: "pending", previewGeneration: state.previewGeneration + 1 };
+
+    case "preview/failed": {
+      const floor = raiseFloor(state, action.currentVersion);
+      const visible = reconcile(floor, state.snapshot, state.preview);
+      const current = action.generation === state.previewGeneration && state.previewStatus === "pending";
+      return { ...state, ...visible, highestObservedVersion: floor, previewStatus: current ? "retry" : state.previewStatus };
+    }
+
     case "get/start":
       return { ...state, readGeneration: state.readGeneration + 1 };
 
@@ -131,9 +156,10 @@ export function tripReducer(state: TripState, action: TripAction): TripState {
         // Discard the obsolete/stale preview but keep the raised floor, which
         // in one transition clears any now-stale preview and disables Commit.
         const { snapshot, preview } = reconcile(floor, state.snapshot, state.preview);
-        return { ...state, snapshot, preview, highestObservedVersion: floor };
+        return { ...state, snapshot, preview, highestObservedVersion: floor,
+          previewStatus: action.generation === state.previewGeneration && state.previewStatus === "pending" ? "retry" : state.previewStatus };
       }
-      return { ...state, preview: action.preview, highestObservedVersion: floor };
+      return { ...state, preview: action.preview, highestObservedVersion: floor, previewStatus: "idle" };
     }
 
     case "mutation/start": {
@@ -141,6 +167,7 @@ export function tripReducer(state: TripState, action: TripAction): TripState {
       return {
         ...state,
         preview: null,
+        previewStatus: "idle",
         previewGeneration: state.previewGeneration + 1,
         pendingOperation: action.operation,
       };

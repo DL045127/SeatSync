@@ -8,12 +8,19 @@
 import type { DirectedPair } from "../matching/address.ts";
 import type { ProviderName } from "../locations/snapshot.ts";
 
+export interface RoutingRequest {
+  venueId: string;
+  signal?: AbortSignal;
+  /** A live batch has been fully decoded. Indexes refer to the original pair list. */
+  onObservation?: (index: number, seconds: number | null, observedAt: string) => void;
+}
+
 export interface RoutingAdapter {
   provider: ProviderName;
   /** Identifies the provider, profile and interpretation of every observation. */
   policyId: string;
   /** Resolve each pair, in order. Never receives pairs with identical coordinates. */
-  fetchLegs(pairs: readonly DirectedPair[]): Promise<Array<number | null>>;
+  fetchLegs(pairs: readonly DirectedPair[], request: RoutingRequest): Promise<Array<number | null>>;
 }
 
 /**
@@ -23,9 +30,11 @@ export interface RoutingAdapter {
  * roster, and it leaves no partial preview behind.
  */
 export class RoutingUnavailable extends Error {
-  constructor(message = "Driving times are unavailable right now.") {
+  readonly retryAfterSeconds?: number;
+  constructor(message = "Driving times are unavailable right now.", retryAfterSeconds?: number) {
     super(message);
     this.name = "RoutingUnavailable";
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 

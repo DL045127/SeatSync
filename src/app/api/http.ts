@@ -363,7 +363,7 @@ function mapError(error: unknown, requestKey: string): Response {
   if (error instanceof TransientFailure) {
     return errorResponse(503, {
       error: { code: error.code, message: error.message, requestId: randomUUID() },
-    });
+    }, error.retryAfterSeconds === undefined ? undefined : { "retry-after": String(error.retryAfterSeconds) });
   }
   if (error instanceof CommitRejected) {
     // A receipt commit the server rejected: nothing applied, key not finalized.

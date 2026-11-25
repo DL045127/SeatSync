@@ -57,6 +57,12 @@ const COMPETING_COUNT = 100; // competing GET/PATCH requests measured per phase
 const PREVIEW_COUNT = 100; // REQUIRED successful, distinct, uncached previews under load
 const DEADLINE_MS = 2000; // per-request hard deadline, covering body read
 
+const addressLoad = process.argv.includes("--address");
+if (addressLoad) {
+  process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+  process.env.GROUPRIDE_USE_TEST_DATABASE = "1";
+}
+
 const control = process.env.P01_NEGATIVE_CONTROL ?? ""; // "", "edits", or "preview"
 
 function gitCommit(): string {
@@ -101,20 +107,35 @@ async function seed(): Promise<{ previewTrip: string; competeTrip: string; toggl
       const t = await createTrip(pool, key(), { name, destinationLabel: dest, departAt: "2026-03-01T09:30:00+02:00" });
       return (t.body as { id: string }).id;
     };
-    const previewTrip = await mk("P01 preview", "Student Union");
+    const passengerTarget = control === "roster" ? 5 : 50;
+    let previewTrip: string;
     let toggleDriver = "";
-    for (let i = 0; i < 20; i++) {
-      const r = await addDriver(pool, previewTrip, key(), { name: `D${i}`, zoneId: zones[i % 4], seatCapacity: 8 });
-      // ISSUE-035: a rejected insert must abort seeding, not be silently ignored.
-      if (r.httpStatus !== 201) throw new Error(`driver seed ${i} failed: ${r.httpStatus} ${JSON.stringify(r.body)}`);
-      if (i === 0) toggleDriver = (r.body as { id: string }).id;
-    }
-    // The `roster` control seeds only 5 passengers so the persisted-roster
-    // check (ISSUE-035) must fail even though the harness intended 50.
-    const passengerTarget = (process.env.P01_NEGATIVE_CONTROL ?? "") === "roster" ? 5 : 50;
-    for (let j = 0; j < passengerTarget; j++) {
-      const r = await addRequest(pool, previewTrip, key(), { name: `P${j}`, zoneId: zones[j % 4] });
-      if (r.httpStatus !== 201) throw new Error(`passenger seed ${j} failed: ${r.httpStatus} ${JSON.stringify(r.body)}`);
+    if (addressLoad) {
+      // Reuse the real fixture search, fresh token and registration paths. Each
+      // participant owns a distinct confirmed location ID in the evidence.
+      const { createAddressTrip, registerDriver, registerPassenger } = await import("../tests/concurrency/helpers/address.ts");
+      previewTrip = await createAddressTrip(pool);
+      for (let i = 0; i < 20; i++) {
+        const id = await registerDriver(pool, previewTrip, `D${i}`, "Driver Start Delta", 8);
+        if (i === 0) toggleDriver = id;
+      }
+      for (let i = 0; i < passengerTarget; i++) {
+        await registerPassenger(pool, previewTrip, `P${i}`, "Pickup Alpha");
+      }
+    } else {
+      previewTrip = await mk("P01 preview", "Student Union");
+      for (let i = 0; i < 20; i++) {
+        const r = await addDriver(pool, previewTrip, key(), { name: `D${i}`, zoneId: zones[i % 4], seatCapacity: 8 });
+        // ISSUE-035: a rejected insert must abort seeding, not be silently ignored.
+        if (r.httpStatus !== 201) throw new Error(`driver seed ${i} failed: ${r.httpStatus} ${JSON.stringify(r.body)}`);
+        if (i === 0) toggleDriver = (r.body as { id: string }).id;
+      }
+      // The `roster` control seeds only 5 passengers so the persisted-roster
+      // check (ISSUE-035) must fail even though the harness intended 50.
+      for (let j = 0; j < passengerTarget; j++) {
+        const r = await addRequest(pool, previewTrip, key(), { name: `P${j}`, zoneId: zones[j % 4] });
+        if (r.httpStatus !== 201) throw new Error(`passenger seed ${j} failed: ${r.httpStatus} ${JSON.stringify(r.body)}`);
+      }
     }
     const competeTrip = await mk("P01 compete", "Library");
     const cd = await addDriver(pool, competeTrip, key(), { name: "C", zoneId: "north", seatCapacity: 4 });
@@ -400,12 +421,21 @@ async function main(): Promise<void> {
     const everyComputeTimed = computedCount > 0 && finiteMatcherCount === computedCount;
     const telemetryPresent = matcherMs !== null && tele.eventLoopDelayMs !== null && everyComputeTimed;
     const gatesMet = busyP95 <= 500 && increaseP95 <= 250;
-    const pass = competingHaveSamples && competingNoErrors && competingNoTimeouts && competingAllSucceeded
+    const addressSamples = addressLoad ? load.samples.map(({ body, ms }) => {
+      const estimate = body.estimate as { provider?: string; legs?: { required: number; fetched: number; reused: number } } | undefined;
+      const optimal = body.optimal as { matchedCount?: number; totalCost?: number } | undefined;
+      return { ms, provider: estimate?.provider, legs: estimate?.legs, matched: optimal?.matchedCount, cost: optimal?.totalCost };
+    }) : undefined;
+    const addressVerified = !addressSamples || addressSamples.every((s, index) =>
+      s.provider === "fixture" && s.matched === 50 && s.cost === 50 * 230 && s.legs?.required === 1070
+      && s.legs.fetched === (index === 0 ? 1070 : 0) && s.legs.reused === (index === 0 ? 0 : 1070));
+    const pass = addressVerified && competingHaveSamples && competingNoErrors && competingNoTimeouts && competingAllSucceeded
       && previewExactAttempts && previewAllDistinct && previewNoFailures && previewNoCacheHits
       && previewFullyComputed && telemetryPresent && rosterIsMax && gatesMet;
 
     const artifact = {
-      experiment: "P-01 application responsiveness",
+      experiment: addressLoad ? "L-17 address fixture responsiveness" : "P-01 application responsiveness",
+      ...(addressSamples ? { addressSamples, addressVerified, sourceState: execSync("git status --short", { encoding: "utf8" }).trim() } : {}),
       measuredClient: "competing GET/PATCH on a separate trip (the gate client)",
       load: "concurrent uncached maximum-size previews on a separate trip (exactly PREVIEW_COUNT, all fresh)",
       node: process.version,
@@ -439,7 +469,8 @@ async function main(): Promise<void> {
     };
 
     mkdirSync("eval", { recursive: true });
-    const outFile = isControlRun ? "eval/p01-control.json" : "eval/p01-responsiveness.json";
+    const experiment = addressLoad ? "l17" : "p01";
+    const outFile = `eval/${experiment}-${isControlRun ? "control" : "responsiveness"}.json`;
     writeFileSync(outFile, JSON.stringify(artifact, null, 2) + "\n");
     console.log(JSON.stringify({
       experiment: artifact.experiment,

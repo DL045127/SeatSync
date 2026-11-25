@@ -250,3 +250,36 @@ describe("preview acceptance equality (baseVersion == snapshot.version == floor)
     expect(canCommit(ok)).toBe(true);
   });
 });
+
+describe("L-17: generations own pending, retry and save", () => {
+  it("an obsolete error or success cannot finish the new request, but can advance the floor", () => {
+    let s = receiveGet(initialState(TRIP), 5);
+    s = tripReducer(s, { type: "preview/start" });
+    const old = s.previewGeneration;
+    s = tripReducer(s, { type: "preview/start" });
+    const current = s.previewGeneration;
+    for (const action of [
+      { type: "preview/failed", generation: old, currentVersion: 5 },
+      { type: "preview/received", generation: old, preview: previewFor(5) },
+    ] as const) {
+      s = tripReducer(s, action);
+      expect(s.previewStatus).toBe("pending");
+      expect(canCommit(s)).toBe(false);
+    }
+    s = tripReducer(s, { type: "preview/failed", generation: old, currentVersion: 6 });
+    expect(s.highestObservedVersion).toBe(6);
+    expect(s.snapshot).toBeNull();
+    expect(s.previewGeneration).toBeGreaterThan(current);
+    s = receiveGet(s, 6);
+    s = tripReducer(s, { type: "preview/start" });
+    s = tripReducer(s, { type: "preview/failed", generation: s.previewGeneration });
+    expect(s.previewStatus).toBe("retry");
+    expect(canCommit(s)).toBe(false);
+    s = tripReducer(s, { type: "preview/start" });
+    s = tripReducer(s, { type: "preview/received", generation: s.previewGeneration, preview: previewFor(6) });
+    expect(canCommit(s)).toBe(true);
+    s = tripReducer(s, { type: "preview/start" });
+    expect(canCommit(s)).toBe(false);
+    expect(s.preview).toBeNull();
+  });
+});

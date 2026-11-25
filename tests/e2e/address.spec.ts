@@ -255,3 +255,85 @@ test("ISSUE-056: a zone trip is still created normally after visiting address mo
   await page.waitForURL(/\/trips\/[0-9a-f-]+$/);
   await expect(page.getByTestId("trip-venue")).toHaveCount(0); // a zone trip: no venue
 });
+
+test("L-17: delayed, failed and superseded estimates leave Save with the current generation", async ({ page }) => {
+  await createAddressTrip(page, "Waiting organizer");
+  const preview = page.getByRole("button", { name: "Preview", exact: true });
+  const save = page.getByRole("button", { name: "Save plan (commit)" });
+  await preview.click();
+  await expect(save).toBeEnabled();
+
+  // Control the browser's delivery of an already-completed server reply, even
+  // after an abort. Real routes and the saved server preview still supply the data.
+  await page.evaluate(() => {
+    const send = window.fetch.bind(window);
+    const pending: Array<(failure: boolean) => void> = [];
+    Object.assign(window, { deliverPreview: (failure: boolean) => pending.shift()!(failure) });
+    window.fetch = async (url, init) => {
+      if (!String(url).endsWith("/match/preview")) return send(url, init);
+      const response = await send(url, { ...init, signal: undefined });
+      return new Promise<Response>((resolve) => {
+        pending.push((fail) => resolve(fail ? Response.json({ error: {} }, { status: 503 }) : response));
+        document.documentElement.dataset.waiting = String(pending.length);
+      });
+    };
+  });
+  const deliver = async (failure: boolean, left: number) => {
+    await page.evaluate(([fail, n]) => {
+      (window as unknown as { deliverPreview: (x: boolean) => void }).deliverPreview(fail);
+      document.documentElement.dataset.waiting = String(n);
+    }, [failure, left] as const);
+  };
+  await preview.click();
+  await expect(page.getByText("Estimating pickup times…")).toBeVisible();
+  await expect(preview).toBeDisabled();
+  await expect(save).toBeDisabled();
+  await expect(page.locator("html")).toHaveAttribute("data-waiting", "1");
+  await deliver(true, 0);
+  const retry = page.getByRole("button", { name: "Retry preview" });
+  await expect(retry).toBeEnabled();
+  await expect(save).toBeDisabled();
+
+  for (const failure of [false, true]) {
+    await page.getByRole("button", { name: /^(Retry preview|Preview)$/ }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-waiting", "1");
+    const before = await version(page);
+    await page.getByLabel("passenger name").fill(failure ? "Pat" : "Lee");
+    await chooseByKeyboard(page, "Passenger pickup address", "pickup alpha", "GROUPRIDE FIXTURE — Pickup Alpha");
+    await page.getByTestId("passenger-form").getByRole("button", { name: "Add passenger" }).click();
+    await expect(page.getByTestId("trip-status")).toContainText(`Version: ${before + 1}`);
+    await preview.click();
+    await expect(page.locator("html")).toHaveAttribute("data-waiting", "2");
+    await deliver(failure, 1);
+    await expect(page.getByText("Estimating pickup times…")).toBeVisible();
+    await expect(preview).toBeDisabled();
+    await expect(save).toBeDisabled();
+    await deliver(false, 0);
+    await expect(save).toBeEnabled();
+    await expect(page.getByTestId("preview-ready")).toContainText(`Preview for version ${before + 1}`);
+  }
+});
+
+test("L-17: browser deadline aborts a stalled response and Retry recovers the saved winner", async ({ page }) => {
+  await createAddressTrip(page, "Deadline recovery");
+  let first = true;
+  let winner = "";
+  await page.route("**/match/preview", async (route) => {
+    if (!first) { await route.continue(); return; }
+    first = false;
+    const response = await route.fetch();
+    winner = (await response.json()).previewId;
+    // The server published, but delivery to the browser is deliberately stalled.
+  });
+  const save = page.getByRole("button", { name: "Save plan (commit)" });
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(page.getByText("Estimating pickup times…")).toBeVisible();
+  const retry = page.getByRole("button", { name: "Retry preview" });
+  await expect(retry).toBeEnabled({ timeout: 15_000 });
+  await expect(save).toBeDisabled();
+  expect(winner).not.toBe("");
+  const retryResponse = page.waitForResponse((r) => r.url().endsWith("/match/preview"));
+  await retry.click();
+  expect(await (await retryResponse).json()).toMatchObject({ previewId: winner });
+  await expect(save).toBeEnabled();
+});
