@@ -1,4 +1,4 @@
-import { appPool, readEmptyBody, runPreview } from "../../../../http.ts";
+import { appPool, readEmptyBody, runPreview, rejectCrossSite } from "../../../../http.ts";
 import { publishPreview } from "../../../../../../trips/preview.ts";
 
 export const runtime = "nodejs";
@@ -8,6 +8,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ tripId: string }> },
 ): Promise<Response> {
+  const crossSite = rejectCrossSite(request);
+  if (crossSite) return crossSite;
   // The preview contract takes no body ({}); reject non-empty/oversized/
   // malformed input (ISSUE-025) before doing any work.
   const bodyCheck = await readEmptyBody(request);

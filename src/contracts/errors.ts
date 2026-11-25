@@ -13,6 +13,12 @@ export type ErrorCode =
   | "DATABASE_UNAVAILABLE"
   | "OUTCOME_UNKNOWN"
   | "DATASET_MISMATCH"
+  // Address trips (docs/ARCHITECTURE-v2.md sections 3 and 6).
+  | "LOCATION_SELECTION_INVALID"
+  | "LOCATION_MODE_MISMATCH"
+  | "SELECTION_KEY_UNAVAILABLE"
+  | "ADDRESS_PROVIDER_UNAVAILABLE"
+  | "CROSS_SITE_REQUEST"
   | "INTERNAL_ERROR";
 
 /** The committed outcome of a keyed mutation, as reported to the client. */
@@ -65,7 +71,13 @@ export class TerminalBusinessError extends Error {
  * `unknown` as appropriate.
  */
 export class TransientFailure extends Error {
-  readonly code: Extract<ErrorCode, "DATABASE_BUSY" | "DATABASE_UNAVAILABLE">;
+  readonly code: Extract<
+    ErrorCode,
+    | "DATABASE_BUSY"
+    | "DATABASE_UNAVAILABLE"
+    | "SELECTION_KEY_UNAVAILABLE"
+    | "ADDRESS_PROVIDER_UNAVAILABLE"
+  >;
   constructor(code: TransientFailure["code"], message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "TransientFailure";

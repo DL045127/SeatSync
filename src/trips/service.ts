@@ -8,6 +8,9 @@ import type { Pool, PoolClient } from "pg";
 import { TerminalBusinessError } from "../contracts/errors.ts";
 import {
   LIMITS,
+  isAddressAddDriver,
+  isAddressAddRequest,
+  isAddressCreateTrip,
   normalizeAddDriver,
   normalizeAddRequest,
   normalizeCreateTrip,
@@ -15,6 +18,10 @@ import {
   normalizeUuid,
   normalizeWithdrawRequest,
 } from "../contracts/index.ts";
+import { verifyAttachment } from "../locations/selection-service.ts";
+import { parseStoredSnapshot, type LocationSnapshot } from "../locations/snapshot.ts";
+import { parseSummary, type EstimateSummary } from "./address-evidence.ts";
+import { tripProvider } from "./address-roster.ts";
 import { assertDataset, canonicalDataset } from "../db/dataset.ts";
 import { datasetLock } from "../db/local-target.ts";
 import { withTransaction } from "../db/transaction.ts";
@@ -25,11 +32,39 @@ import {
 } from "./mutation.ts";
 import * as repo from "./repository.ts";
 
+/** The display fields of a stored address. Coordinates and IDs stay server-side. */
+export interface LocationView {
+  label: string;
+  detail: string;
+  precision: string;
+  provider: string;
+  attribution: string;
+}
+
+function viewOf(value: unknown): LocationView {
+  const s: LocationSnapshot = parseStoredSnapshot(value);
+  const { street, city, state, postcode } = s.address;
+  const place = [city, [state, postcode].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  return {
+    label: s.label,
+    detail: [street, place].filter(Boolean).join(", "),
+    precision: s.precision,
+    provider: s.provider,
+    attribution: s.attribution,
+  };
+}
+
 export interface TripSnapshot {
   id: string;
   name: string;
   destinationLabel: string;
   departAt: string;
+  locationMode: "zone" | "address";
+  /** Unit of every cost on this dashboard: zone cost, or estimated extra driving seconds. */
+  costUnit: "zone_cost" | "detour_seconds";
+  venue: LocationView | null;
+  /** The committed plan's public estimate summary (address trips with a saved plan). */
+  estimate: EstimateSummary | null;
   status: "open" | "assigned" | "needs_rematch";
   version: number;
   planVersion: number | null;
@@ -37,12 +72,20 @@ export interface TripSnapshot {
   committedPreviewId: string | null;
   drivers: Array<{
     id: string;
-    zoneId: string;
+    zoneId: string | null;
+    location: LocationView | null;
+    maxDetourMinutes: number | null;
     name: string;
     seatCapacity: number;
     active: boolean;
   }>;
-  requests: Array<{ id: string; zoneId: string; name: string; active: boolean }>;
+  requests: Array<{
+    id: string;
+    zoneId: string | null;
+    location: LocationView | null;
+    name: string;
+    active: boolean;
+  }>;
   assignments: Array<{ requestId: string; driverId: string; pickupCost: number }>;
   totals: { matched: number; totalCost: number; seatsUsed: number; seatsAvailable: number };
 }
@@ -94,7 +137,11 @@ export async function getTripSnapshot(
       repo.listRequests(client, tripId),
       repo.listAssignments(client, tripId),
     ]);
-    return toSnapshot(trip, drivers, requests, assignments);
+    // The committed plan's public summary. Never the private leg evidence.
+    const estimate = trip.location_mode === "address" && trip.committed_preview_id
+      ? await repo.findPreviewSummary(client, tripId, trip.committed_preview_id)
+      : null;
+    return toSnapshot(trip, drivers, requests, assignments, estimate);
   });
 }
 
@@ -103,6 +150,7 @@ function toSnapshot(
   drivers: repo.DriverRow[],
   requests: repo.RequestRow[],
   assignments: repo.AssignmentRow[],
+  estimate: unknown,
 ): TripSnapshot {
   const totalCost = assignments.reduce((s, a) => s + a.pickup_cost, 0);
   const seatsAvailable = drivers
@@ -113,6 +161,10 @@ function toSnapshot(
     name: trip.name,
     destinationLabel: trip.destination_label,
     departAt: trip.depart_at,
+    locationMode: trip.location_mode,
+    costUnit: trip.location_mode === "address" ? "detour_seconds" : "zone_cost",
+    venue: trip.location_mode === "address" ? viewOf(trip.venue_location) : null,
+    estimate: estimate ? parseSummary(estimate) : null,
     status: trip.status,
     version: trip.version,
     planVersion: trip.plan_version,
@@ -121,6 +173,8 @@ function toSnapshot(
     drivers: drivers.map((d) => ({
       id: d.id,
       zoneId: d.zone_id,
+      location: d.location_mode === "address" ? viewOf(d.location) : null,
+      maxDetourMinutes: d.max_detour_minutes,
       name: d.name,
       seatCapacity: d.seat_capacity,
       active: d.active,
@@ -128,6 +182,7 @@ function toSnapshot(
     requests: requests.map((r) => ({
       id: r.id,
       zoneId: r.zone_id,
+      location: r.location_mode === "address" ? viewOf(r.location) : null,
       name: r.name,
       active: r.active,
     })),
@@ -163,7 +218,12 @@ export function createTrip(
       normalizedBody: body,
     },
     work: async ({ client }): Promise<AppliedResult> => {
-      const trip = await repo.insertTrip(client, body);
+      // The address form verifies its venue token here, inside keyed work, so a
+      // matching receipt has already replayed before any signature, expiry or
+      // provider check (docs/ARCHITECTURE-v2.md section 3).
+      const trip = isAddressCreateTrip(body)
+        ? await createAddressTrip(client, body)
+        : await repo.insertTrip(client, body);
       return {
         httpStatus: 201,
         body: {
@@ -196,15 +256,29 @@ export async function addDriver(
     },
     lockTrip: (client) => lockTripOr404(client, tripId),
     work: async ({ client, locked }): Promise<AppliedResult> => {
+      requireTripMode(locked, isAddressAddDriver(body) ? "address" : "zone");
+      const start = isAddressAddDriver(body)
+        ? await verifyAttachment(client, body.startSelectionToken, {
+            purpose: "driver_start",
+            tripId,
+            provider: tripProvider(locked),
+          })
+        : undefined;
       if ((await repo.countDrivers(client, tripId)) >= LIMITS.driversPerTrip) {
         throw new TerminalBusinessError(422, "ROSTER_LIMIT", "Driver record limit reached.");
       }
-      const driver = await repo.insertDriver(client, {
-        tripId,
-        zoneId: body.zoneId,
-        name: body.name,
-        seatCapacity: body.seatCapacity,
-      });
+      const driver = await repo.insertDriver(
+        client,
+        isAddressAddDriver(body)
+          ? {
+              tripId,
+              location: start,
+              maxDetourMinutes: body.maxDetourMinutes,
+              name: body.name,
+              seatCapacity: body.seatCapacity,
+            }
+          : { tripId, zoneId: body.zoneId, name: body.name, seatCapacity: body.seatCapacity },
+      );
       const version = await applyRosterChange(client, locked);
       return appliedRoster(key, 201, { id: driver.id, mutationVersion: version });
     },
@@ -231,14 +305,23 @@ export async function addRequest(
     },
     lockTrip: (client) => lockTripOr404(client, tripId),
     work: async ({ client, locked }): Promise<AppliedResult> => {
+      requireTripMode(locked, isAddressAddRequest(body) ? "address" : "zone");
+      const pickup = isAddressAddRequest(body)
+        ? await verifyAttachment(client, body.pickupSelectionToken, {
+            purpose: "pickup",
+            tripId,
+            provider: tripProvider(locked),
+          })
+        : undefined;
       if ((await repo.countRequests(client, tripId)) >= LIMITS.passengersPerTrip) {
         throw new TerminalBusinessError(422, "ROSTER_LIMIT", "Passenger record limit reached.");
       }
-      const request = await repo.insertRequest(client, {
-        tripId,
-        zoneId: body.zoneId,
-        name: body.name,
-      });
+      const request = await repo.insertRequest(
+        client,
+        isAddressAddRequest(body)
+          ? { tripId, location: pickup, name: body.name }
+          : { tripId, zoneId: body.zoneId, name: body.name },
+      );
       const version = await applyRosterChange(client, locked);
       return appliedRoster(key, 201, { id: request.id, mutationVersion: version });
     },
@@ -340,6 +423,33 @@ export async function withdrawRequest(
 }
 
 // ---- helpers ----
+
+async function createAddressTrip(
+  client: PoolClient,
+  body: { name: string; departAt: string; venueSelectionToken: string },
+): Promise<repo.TripRow> {
+  const venue = await verifyAttachment(client, body.venueSelectionToken, { purpose: "venue", tripId: null });
+  return repo.insertTrip(client, {
+    name: body.name,
+    // The label is bounded to the destination column's limit by the snapshot schema.
+    destinationLabel: venue.label,
+    departAt: body.departAt,
+    venueLocation: venue,
+  });
+}
+
+/** A form for the other mode is a terminal, receipted rejection under the trip lock. */
+function requireTripMode(trip: repo.TripRow, mode: "zone" | "address"): void {
+  if (trip.location_mode !== mode) {
+    throw new TerminalBusinessError(
+      422,
+      "LOCATION_MODE_MISMATCH",
+      mode === "address"
+        ? "This trip uses zones; register with a zone."
+        : "This trip uses addresses; register with a searched address.",
+    );
+  }
+}
 
 /**
  * Lock the trip row FOR UPDATE before the savepoint (ISSUE-015). A missing trip

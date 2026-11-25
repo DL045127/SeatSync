@@ -42,6 +42,125 @@ function invalidInput(message: string, fields?: Record<string, string>): Respons
   return errorResponse(400, body);
 }
 
+type Env = Readonly<Record<string, string | undefined>>;
+
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/** An Origin header is a bare origin: scheme, host and optional port, and nothing else. */
+function asBareOrigin(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return url.origin !== "null" && url.origin === value ? url.origin : undefined;
+  } catch {
+    return undefined; // includes the opaque "null" origin
+  }
+}
+
+/**
+ * The origins a browser write may come from, as FULL origins (scheme, host and
+ * port), taken from configuration and never from what the request claims.
+ *
+ * - `GROUPRIDE_TRUSTED_ORIGINS` (comma-separated), when set, lists the only
+ *   trusted origins. An entry that is not an http(s) URL is ignored, so a
+ *   configuration with no valid entry trusts nothing.
+ * - Otherwise the app trusts its own loopback origins on the port it is
+ *   LISTENING on (`PORT`, which Next sets to the actual port once it listens):
+ *   `http://127.0.0.1:<port>`, `http://localhost:<port>` and `http://[::1]:<port>`.
+ * - With no known port (a handler called directly, as the integration suites
+ *   do) the fallback is `http://` plus the Host header, but ONLY when that Host
+ *   is itself a bare loopback authority. A DNS-rebinding page on evil.example
+ *   controls both its Origin and the Host the browser sends, so copying the Host
+ *   of an arbitrary request would trust it.
+ */
+function trustedOrigins(request: Request, env: Env): ReadonlySet<string> {
+  const configured = env.GROUPRIDE_TRUSTED_ORIGINS;
+  if (configured !== undefined && configured.trim() !== "") {
+    const origins: string[] = [];
+    for (const entry of configured.split(",")) {
+      try {
+        const url = new URL(entry.trim());
+        if (url.protocol === "http:" || url.protocol === "https:") origins.push(url.origin);
+      } catch {
+        // ignored: fail closed
+      }
+    }
+    return new Set(origins);
+  }
+  const port = env.PORT;
+  if (port !== undefined && /^\d{1,5}$/.test(port) && Number(port) >= 1 && Number(port) <= 65535) {
+    return new Set([...LOOPBACK_HOSTNAMES].map((name) => new URL(`http://${name}:${port}`).origin));
+  }
+  const host = request.headers.get("host");
+  if (!host) return new Set();
+  try {
+    const url = new URL(`http://${host}`);
+    const bare = !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+    return bare && LOOPBACK_HOSTNAMES.has(url.hostname) ? new Set([url.origin]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Reject a request whose DESTINATION is not one of the trusted authorities
+ * (host and port). `rejectCrossSite` alone is not enough for a state-changing
+ * GET: a same-origin GET carries no `Origin` header, so a DNS-rebinding page
+ * (served from evil.example, which resolves to the loopback server) passes the
+ * Origin and Sec-Fetch-Site checks. Its Host, however, names the attacker's
+ * hostname. A header-less script calling the configured local service has a
+ * trusted Host and is unaffected (ISSUE-060).
+ */
+export function rejectUntrustedHost(request: Request, env: Env = process.env): Response | undefined {
+  const refuse = () => errorResponse(403, {
+    error: {
+      code: "CROSS_SITE_REQUEST",
+      message: "Requests to this host are not accepted.",
+      requestId: randomUUID(),
+    },
+  });
+  const host = request.headers.get("host");
+  if (!host) return refuse();
+  let authority: string;
+  try {
+    const url = new URL(`http://${host}`);
+    const bare = !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+    if (!bare) return refuse();
+    authority = url.host;
+  } catch {
+    return refuse();
+  }
+  const trusted = new Set([...trustedOrigins(request, env)].map((origin) => new URL(origin).host));
+  return trusted.has(authority) ? undefined : refuse();
+}
+
+/**
+ * Reject a cross-site browser request before any keyed work or side effect: 403,
+ * no receipt. Two independent checks, both applied:
+ *  - `Sec-Fetch-Site`, when present, must be `same-origin` or `none`. `same-site`
+ *    (another port on the same host) and `cross-site` are refused.
+ *  - `Origin`, when present, must be exactly one of the trusted FULL origins.
+ * Requests carrying neither header are allowed: the evaluation scripts and the
+ * integration suites use Node `fetch`, which sends neither, and a browser always
+ * sends at least one on a write.
+ */
+export function rejectCrossSite(request: Request, env: Env = process.env): Response | undefined {
+  const refuse = () => errorResponse(403, {
+    error: {
+      code: "CROSS_SITE_REQUEST",
+      message: "Cross-site requests are not accepted.",
+      requestId: randomUUID(),
+    },
+  });
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin" && site !== "none") return refuse();
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    const normalized = asBareOrigin(origin);
+    if (normalized === undefined || !trustedOrigins(request, env).has(normalized)) return refuse();
+  }
+  return undefined;
+}
+
 /** Read the request key header; a malformed or missing key is INVALID_INPUT. */
 export function readRequestKey(request: Request): string | Response {
   const key = request.headers.get("idempotency-key");

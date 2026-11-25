@@ -29,6 +29,10 @@ export const LIMITS = {
   // columns use it, so the contract maximum must match the column, not an
   // unsigned 32-bit range.
   versionMax: 2 ** 31 - 1,
+  // Address trips (docs/ARCHITECTURE-v2.md section 1): the per-pair extra
+  // driving limit a driver accepts, in whole minutes.
+  detourMinutesMin: 0,
+  detourMinutesMax: 120,
 } as const;
 
 // The Zod schemas below are shape-only building blocks and are intentionally
@@ -56,6 +60,7 @@ function boundedInt(min: number, max: number) {
 
 const versionInt = boundedInt(LIMITS.versionMin, LIMITS.versionMax);
 const seatInt = boundedInt(LIMITS.seatMin, LIMITS.seatMax);
+const detourInt = boundedInt(LIMITS.detourMinutesMin, LIMITS.detourMinutesMax);
 
 /** A canonical lowercase UUID. Accepts mixed case and lowercases it. */
 const canonicalUuid = z
@@ -63,7 +68,12 @@ const canonicalUuid = z
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
   .transform((v) => v.toLowerCase());
 
-const createTripSchema = z
+// Each mutation has a zone form (deployed since W2, fingerprint-stable) and an
+// address form. The two are disjoint by their keys and each is strict, so a
+// mixed body fails validation. A selection token is an opaque string here: it
+// is NOT trimmed, decoded or re-serialized, so its exact bytes enter the
+// fingerprint; its size, signature and scope are judged inside keyed work.
+const zoneCreateTripSchema = z
   .object({
     name: z.string(),
     destinationLabel: z.string(),
@@ -71,7 +81,16 @@ const createTripSchema = z
   })
   .strict();
 
-const addDriverSchema = z
+const addressCreateTripSchema = z
+  .object({
+    name: z.string(),
+    departAt: z.string(),
+    locationMode: z.literal("address"),
+    venueSelectionToken: z.string(),
+  })
+  .strict();
+
+const zoneAddDriverSchema = z
   .object({
     name: z.string(),
     zoneId: z.string(),
@@ -79,10 +98,26 @@ const addDriverSchema = z
   })
   .strict();
 
-const addRequestSchema = z
+const addressAddDriverSchema = z
+  .object({
+    name: z.string(),
+    startSelectionToken: z.string(),
+    seatCapacity: seatInt,
+    maxDetourMinutes: detourInt,
+  })
+  .strict();
+
+const zoneAddRequestSchema = z
   .object({
     name: z.string(),
     zoneId: z.string(),
+  })
+  .strict();
+
+const addressAddRequestSchema = z
+  .object({
+    name: z.string(),
+    pickupSelectionToken: z.string(),
   })
   .strict();
 
@@ -97,19 +132,42 @@ const withdrawRequestSchema = z
 
 const commitSchema = z.object({ previewId: canonicalUuid }).strict();
 
-export interface NormalizedCreateTrip {
+export interface NormalizedZoneCreateTrip {
   name: string;
   destinationLabel: string;
   departAt: string;
 }
 
+export interface NormalizedAddressCreateTrip {
+  name: string;
+  departAt: string;
+  locationMode: "address";
+  venueSelectionToken: string;
+}
+
+export type NormalizedCreateTrip = NormalizedZoneCreateTrip | NormalizedAddressCreateTrip;
+
+export function isAddressCreateTrip(body: NormalizedCreateTrip): body is NormalizedAddressCreateTrip {
+  return "locationMode" in body;
+}
+
 /**
  * Parse and normalize a create-trip body. Validation of structure happens with
  * Zod; label/timestamp normalization and code-point checks happen afterward so
- * the fingerprint sees canonical values.
+ * the fingerprint sees canonical values. The zone form is byte-for-byte the
+ * deployed one.
  */
 export function normalizeCreateTrip(raw: unknown): NormalizedCreateTrip {
-  const parsed = createTripSchema.parse(raw);
+  if (isAddressForm(raw, "locationMode")) {
+    const parsed = addressCreateTripSchema.parse(raw);
+    return {
+      name: normalizeLabel(parsed.name, LIMITS.tripNameCodePoints),
+      departAt: normalizeTimestamp(parsed.departAt),
+      locationMode: "address",
+      venueSelectionToken: parsed.venueSelectionToken,
+    };
+  }
+  const parsed = zoneCreateTripSchema.parse(raw);
   return {
     name: normalizeLabel(parsed.name, LIMITS.tripNameCodePoints),
     destinationLabel: normalizeLabel(
@@ -120,10 +178,29 @@ export function normalizeCreateTrip(raw: unknown): NormalizedCreateTrip {
   };
 }
 
-export interface NormalizedAddDriver {
+/** True when the raw body carries an address-form key, so it must parse as that form. */
+function isAddressForm(raw: unknown, ...keys: string[]): boolean {
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw)
+    && keys.some((key) => key in raw);
+}
+
+export interface NormalizedZoneAddDriver {
   name: string;
   zoneId: string;
   seatCapacity: number;
+}
+
+export interface NormalizedAddressAddDriver {
+  name: string;
+  startSelectionToken: string;
+  seatCapacity: number;
+  maxDetourMinutes: number;
+}
+
+export type NormalizedAddDriver = NormalizedZoneAddDriver | NormalizedAddressAddDriver;
+
+export function isAddressAddDriver(body: NormalizedAddDriver): body is NormalizedAddressAddDriver {
+  return "startSelectionToken" in body;
 }
 
 /** Zone IDs must match the seeded enum exactly; the caller supplies it. */
@@ -131,7 +208,20 @@ export function normalizeAddDriver(
   raw: unknown,
   knownZoneIds: ReadonlySet<string>,
 ): NormalizedAddDriver {
-  const parsed = addDriverSchema.parse(raw);
+  if (isAddressForm(raw, "startSelectionToken", "maxDetourMinutes")) {
+    const parsed = addressAddDriverSchema.parse(raw);
+    return {
+      name: normalizeLabel(parsed.name, LIMITS.participantNameCodePoints),
+      startSelectionToken: parsed.startSelectionToken,
+      seatCapacity: normalizeInteger(parsed.seatCapacity, LIMITS.seatMin, LIMITS.seatMax),
+      maxDetourMinutes: normalizeInteger(
+        parsed.maxDetourMinutes,
+        LIMITS.detourMinutesMin,
+        LIMITS.detourMinutesMax,
+      ),
+    };
+  }
+  const parsed = zoneAddDriverSchema.parse(raw);
   return {
     name: normalizeLabel(parsed.name, LIMITS.participantNameCodePoints),
     zoneId: normalizeZoneId(parsed.zoneId, knownZoneIds),
@@ -143,16 +233,34 @@ export function normalizeAddDriver(
   };
 }
 
-export interface NormalizedAddRequest {
+export interface NormalizedZoneAddRequest {
   name: string;
   zoneId: string;
+}
+
+export interface NormalizedAddressAddRequest {
+  name: string;
+  pickupSelectionToken: string;
+}
+
+export type NormalizedAddRequest = NormalizedZoneAddRequest | NormalizedAddressAddRequest;
+
+export function isAddressAddRequest(body: NormalizedAddRequest): body is NormalizedAddressAddRequest {
+  return "pickupSelectionToken" in body;
 }
 
 export function normalizeAddRequest(
   raw: unknown,
   knownZoneIds: ReadonlySet<string>,
 ): NormalizedAddRequest {
-  const parsed = addRequestSchema.parse(raw);
+  if (isAddressForm(raw, "pickupSelectionToken")) {
+    const parsed = addressAddRequestSchema.parse(raw);
+    return {
+      name: normalizeLabel(parsed.name, LIMITS.participantNameCodePoints),
+      pickupSelectionToken: parsed.pickupSelectionToken,
+    };
+  }
+  const parsed = zoneAddRequestSchema.parse(raw);
   return {
     name: normalizeLabel(parsed.name, LIMITS.participantNameCodePoints),
     zoneId: normalizeZoneId(parsed.zoneId, knownZoneIds),

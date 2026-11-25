@@ -95,6 +95,12 @@ export async function runSetup(
         "INSERT INTO trips (name, destination_label, depart_at) VALUES ($1, $2, $3) RETURNING id",
         [demoTrip.name, demoTrip.destinationLabel, demoTrip.departAt],
       );
+      // Selection tokens are signed under the dataset generation. Replacing it
+      // in THIS transaction gives data, receipts and token validity one commit
+      // boundary: a rolled-back or lost-acknowledgement reset leaves either the
+      // old data with the old generation or the new data with the new one.
+      // Reset itself writes no files (docs/ARCHITECTURE-v2.md section 3).
+      await client.query("UPDATE dataset_generation SET generation = gen_random_uuid()");
       return trip.rows[0].id;
     });
   } finally {

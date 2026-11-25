@@ -54,15 +54,22 @@ To open the app against your demo database, run `npm start` after building or us
 
 `npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it and wait for reset to finish before restarting. A startup read overlapping reset may briefly report `DATASET_MISMATCH` (ISSUE-004). `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
 
-### Address fixture setup (planned for checkpoint A)
+### Address trips with the offline fixture (checkpoint A, verified)
 
-The procedure below is the L-01 clean-checkout target. The current runnable release uses zones.
+Address trips let an organizer search for a venue, driver start addresses and passenger pickup addresses, then preview, save and reload a plan whose costs are estimated extra driving time. This checkpoint runs entirely offline against a shipped catalog of **fictional** places and driving times ([data/fixture-places.json](data/fixture-places.json)): no account, API key, network or geocoder. Live search and routing are a later checkpoint.
 
-1. Follow the standard local dependency and database setup above with no copied signing key or provider credentials.
-2. Once checkpoint A ships, start the app with `GROUPRIDE_ADDRESS_PROVIDER=fixture` in the server environment. The first fixture search or registration against the designated demo or test database will generate that target's `.groupride-local/<demo-or-test>/fixture-signing.key`; starting the server or running `next build` creates nothing. Later starts reuse it.
-3. To rehearse reset, stop the app and run the existing guarded reset for the intended target. Reset changes that database's signing generation in the same transaction and leaves the key file untouched, so every token issued before the reset stops working. After restart, search again for a venue if its token predates reset. Keep generated keys local.
+1. Follow the standard setup above. No copied secret and no provider credentials are needed.
+2. Upgrade an existing database with `npm run db:migrate` (add `-- test` for the test database). It is additive: saved zone trips, plans, previews and receipts are unchanged. `npm run demo:reset` and `npm run demo` also apply it first.
+3. Select the provider in the server environment, for example `GROUPRIDE_ADDRESS_PROVIDER=fixture npm run demo`, or put that line in `.env` (see `.env.example`). The default is `off`: zone trips work as before, and address search reports that it is disabled.
+4. In the browser choose **Trip type → Addresses**, search for `event hall`, and select a result with the keyboard (arrow keys, Enter). Then register a driver and a passenger on the trip page, preview, save and reload. Results labelled “street only” or “city” are shown but cannot be chosen.
 
-[Fixture design and acceptance checks](docs/ARCHITECTURE-v2.md#delivery-and-acceptance)
+Browser writes are accepted only from the app's own loopback origin on its listening port (`http://127.0.0.1:<port>` or `http://localhost:<port>`); a foreign origin gets 403. If you reach the app through another host name or a port mapping, set `GROUPRIDE_TRUSTED_ORIGINS` to the full origin (see `.env.example`). Scripts and `curl` send no `Origin` header and are unaffected.
+
+The first search creates an owner-only (`0700`/`0600`) signing secret at `.groupride-local/<demo|test>/fixture-signing.key`, which Git ignores. Starting the server or running `next build` creates nothing. A guarded reset (`npm run demo:reset`) replaces the database’s dataset generation in the same transaction as the data, which invalidates every earlier search result, and never rewrites the secret. Deleting the secret invalidates earlier search results too; search again.
+
+For the verified expectations, try Event Hall (venue), a driver starting at *Driver Start Delta* and a passenger at *Pickup Alpha*: Delta→Alpha 403 s + Alpha→Hall 346 s − Delta→Hall 519 s = **230 s**, shown as “3 min 50 s”. Costs on an address trip are estimated extra driving seconds, labelled as the sum of individual pickup detours; zone trips keep their synthetic cost units.
+
+Verified commands for this checkpoint (Node 24, the local test database): `npm run lint`, `npm run typecheck`, `npm run test:unit`, `npm run test:concurrency`, `npm run test:e2e`. [L-01–L-04 evidence](docs/EVIDENCE.md#checkpoint-a-closeout)
 
 ## Demonstration (W3 workflow)
 

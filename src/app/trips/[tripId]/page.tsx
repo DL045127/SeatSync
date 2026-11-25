@@ -9,6 +9,8 @@ import {
 } from "../reducer.ts";
 import { LIMITS } from "../../../contracts/index.ts";
 import { normalizeLabel } from "../../../contracts/normalize.ts";
+import { LocationPicker, type Selection } from "../../locations/LocationPicker.tsx";
+import { type CostUnit, formatCost, formatSeconds, formatTotal } from "../format.ts";
 import {
   type OperationResponse,
   claimSlot,
@@ -39,21 +41,54 @@ interface MatchResult {
   matchedCount: number;
   totalCost: number;
 }
+interface Estimate {
+  provider: string;
+  observedFrom: string | null;
+  observedTo: string | null;
+}
 interface PreviewPayload {
   previewId: string;
   baseVersion: number;
   algorithmVersion: string;
   optimal: MatchResult;
   greedy: MatchResult;
+  costUnit?: CostUnit;
+  estimate?: Estimate;
   [key: string]: unknown;
+}
+
+interface LocationView {
+  label: string;
+  detail: string;
+  precision: string;
+  provider: string;
+  attribution: string;
 }
 
 interface Snapshot {
   id: string;
   version: number;
   status: "open" | "assigned" | "needs_rematch";
-  drivers: Array<{ id: string; zoneId: string; name: string; seatCapacity: number; active: boolean }>;
-  requests: Array<{ id: string; zoneId: string; name: string; active: boolean }>;
+  locationMode: "zone" | "address";
+  costUnit: CostUnit;
+  venue: LocationView | null;
+  estimate: Estimate | null;
+  drivers: Array<{
+    id: string;
+    zoneId: string | null;
+    location: LocationView | null;
+    maxDetourMinutes: number | null;
+    name: string;
+    seatCapacity: number;
+    active: boolean;
+  }>;
+  requests: Array<{
+    id: string;
+    zoneId: string | null;
+    location: LocationView | null;
+    name: string;
+    active: boolean;
+  }>;
   assignments: Array<{ requestId: string; driverId: string; pickupCost: number }>;
   totals: { matched: number; totalCost: number; seatsUsed: number; seatsAvailable: number };
   [key: string]: unknown;
@@ -255,6 +290,22 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
     });
   }
 
+  function registerAddressDriver(name: string, token: string, seatCapacity: number, maxDetourMinutes: number): void {
+    void sendMutation({
+      method: "POST",
+      canonicalRoute: `/api/trips/${tripId}/drivers`,
+      normalizedBody: { name, startSelectionToken: token, seatCapacity, maxDetourMinutes },
+    });
+  }
+
+  function registerAddressPassenger(name: string, token: string): void {
+    void sendMutation({
+      method: "POST",
+      canonicalRoute: `/api/trips/${tripId}/requests`,
+      normalizedBody: { name, pickupSelectionToken: token },
+    });
+  }
+
   const pending = state.pendingOperation;
   const commitEnabled = canCommit(state);
   const nameOf = (members: Array<{ id: string; name: string }>, id: string) =>
@@ -282,14 +333,33 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
       {snapshot ? (
         <>
           <p data-testid="trip-status">
-            Status: {snapshot.status} · Version: {snapshot.version} · Matched: {snapshot.totals.matched} ·
-            Total cost: {snapshot.totals.totalCost} · Seats available: {snapshot.totals.seatsAvailable}
+            Status: {snapshot.status} · Version: {snapshot.version} · Matched: {snapshot.totals.matched} ·{" "}
+            {formatTotal(snapshot.costUnit, snapshot.totals.totalCost)} · Seats available:{" "}
+            {snapshot.totals.seatsAvailable}
           </p>
+          {snapshot.venue ? (
+            <p data-testid="trip-venue">
+              Venue: {snapshot.venue.label} — {snapshot.venue.detail}.{" "}
+              {snapshot.venue.provider === "fixture"
+                ? "Fixture data: fictional places and driving times."
+                : null}{" "}
+              {snapshot.venue.attribution}
+            </p>
+          ) : null}
 
           <section>
             <h2>Register</h2>
-            <RegisterDriverForm disabled={!!pending} onSubmit={registerDriver} />
-            <RegisterPassengerForm disabled={!!pending} onSubmit={registerPassenger} />
+            {snapshot.locationMode === "address" ? (
+              <>
+                <AddressDriverForm tripId={tripId} disabled={!!pending} onSubmit={registerAddressDriver} />
+                <AddressPassengerForm tripId={tripId} disabled={!!pending} onSubmit={registerAddressPassenger} />
+              </>
+            ) : (
+              <>
+                <RegisterDriverForm disabled={!!pending} onSubmit={registerDriver} />
+                <RegisterPassengerForm disabled={!!pending} onSubmit={registerPassenger} />
+              </>
+            )}
           </section>
 
           <section>
@@ -297,7 +367,9 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
             <ul>
               {snapshot.drivers.map((d) => (
                 <li key={d.id}>
-                  {d.name} ({d.zoneId}) seats {d.seatCapacity} {d.active ? "" : "— canceled"}
+                  {d.name} ({d.location ? d.location.label : d.zoneId}) seats {d.seatCapacity}
+                  {d.maxDetourMinutes !== null ? ` · limit ${d.maxDetourMinutes} min` : ""}{" "}
+                  {d.active ? "" : "— canceled"}
                   {d.active ? (
                     <>
                       <button
@@ -320,7 +392,7 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
             <ul>
               {snapshot.requests.map((r) => (
                 <li key={r.id}>
-                  {r.name} ({r.zoneId}) {r.active ? "" : "— withdrawn"}
+                  {r.name} ({r.location ? r.location.label : r.zoneId}) {r.active ? "" : "— withdrawn"}
                   {r.active ? (
                     <button
                       disabled={!!pending}
@@ -342,15 +414,31 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
               <div data-testid="preview-ready">
                 <p role="status">Preview for version {previewDetail.baseVersion} (optimal plan).</p>
                 <p>
-                  Optimal: {previewDetail.optimal.matchedCount} matched, cost{" "}
-                  {previewDetail.optimal.totalCost}. Greedy: {previewDetail.greedy.matchedCount} matched,
-                  cost {previewDetail.greedy.totalCost}.
+                  Optimal: {previewDetail.optimal.matchedCount} matched,{" "}
+                  {previewDetail.costUnit === "detour_seconds"
+                    ? `sum of estimated individual pickup detours ${formatSeconds(previewDetail.optimal.totalCost)}`
+                    : `cost ${previewDetail.optimal.totalCost}`}
+                  . Greedy: {previewDetail.greedy.matchedCount} matched,{" "}
+                  {previewDetail.costUnit === "detour_seconds"
+                    ? formatSeconds(previewDetail.greedy.totalCost)
+                    : `cost ${previewDetail.greedy.totalCost}`}
+                  .
                 </p>
+                {previewDetail.estimate ? (
+                  <p data-testid="preview-estimate">
+                    {previewDetail.estimate.provider === "fixture"
+                      ? "Fixture estimate: fictional driving times. "
+                      : "Estimated driving times. "}
+                    {previewDetail.estimate.observedFrom
+                      ? `Observed ${previewDetail.estimate.observedFrom}.`
+                      : "No provider observations."}
+                  </p>
+                ) : null}
                 <ul data-testid="preview-assignments">
                   {previewDetail.optimal.assignments.map((a) => (
                     <li key={a.passengerId}>
                       {nameOf(snapshot.requests, a.passengerId)} →{" "}
-                      {nameOf(snapshot.drivers, a.driverId)} (cost {a.cost})
+                      {nameOf(snapshot.drivers, a.driverId)} ({formatCost(previewDetail.costUnit ?? "zone_cost", a.cost)})
                     </li>
                   ))}
                 </ul>
@@ -377,7 +465,7 @@ export default function TripPage({ params }: { params: Promise<{ tripId: string 
                 {snapshot.assignments.map((a) => (
                   <li key={a.requestId}>
                     {nameOf(snapshot.requests, a.requestId)} →{" "}
-                    {nameOf(snapshot.drivers, a.driverId)} (cost {a.pickupCost})
+                    {nameOf(snapshot.drivers, a.driverId)} ({formatCost(snapshot.costUnit, a.pickupCost)})
                   </li>
                 ))}
               </ul>
@@ -480,6 +568,127 @@ function RegisterPassengerForm({
         <option value="west">west</option>
       </select>
       <button type="submit" disabled={disabled}>Add passenger</button>
+      {fieldError ? <span role="alert">{fieldError}</span> : null}
+    </form>
+  );
+}
+
+function AddressDriverForm({
+  tripId,
+  disabled,
+  onSubmit,
+}: {
+  tripId: string;
+  disabled: boolean;
+  onSubmit: (name: string, token: string, seatCapacity: number, maxDetourMinutes: number) => void;
+}) {
+  const [name, setName] = useState("");
+  const [start, setStart] = useState<Selection | null>(null);
+  const [seatCapacity, setSeatCapacity] = useState(1);
+  // Proposed default: 15 minutes, editable at registration, 0-120 inclusive.
+  const [maxDetour, setMaxDetour] = useState(15);
+  const [resetSignal, setResetSignal] = useState(0);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  return (
+    <form
+      data-testid="driver-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const check = validateName(name);
+        if (!check.ok) {
+          setFieldError(check.reason);
+          return;
+        }
+        if (!start) {
+          setFieldError("Search for the starting address and select one of the suggestions.");
+          return;
+        }
+        if (!Number.isInteger(maxDetour) || maxDetour < 0 || maxDetour > 120) {
+          setFieldError("The detour limit is a whole number of minutes from 0 to 120.");
+          return;
+        }
+        setFieldError(null);
+        onSubmit(check.value, start.token, seatCapacity, maxDetour);
+        setName("");
+        setStart(null);
+        setResetSignal((n) => n + 1);
+      }}
+    >
+      <input aria-label="driver name" value={name} onChange={(e) => setName(e.target.value)} />
+      <LocationPicker
+        label="Driver start address"
+        purpose="driver_start"
+        tripId={tripId}
+        disabled={disabled}
+        onSelect={setStart}
+        resetSignal={resetSignal}
+      />
+      <input
+        aria-label="driver seats"
+        type="number"
+        min={0}
+        max={8}
+        value={seatCapacity}
+        onChange={(e) => setSeatCapacity(Number(e.target.value))}
+      />
+      <input
+        aria-label="driver detour limit (minutes)"
+        type="number"
+        min={0}
+        max={120}
+        value={maxDetour}
+        onChange={(e) => setMaxDetour(Number(e.target.value))}
+      />
+      <button type="submit" disabled={disabled || !start}>Add driver</button>
+      {fieldError ? <span role="alert">{fieldError}</span> : null}
+    </form>
+  );
+}
+
+function AddressPassengerForm({
+  tripId,
+  disabled,
+  onSubmit,
+}: {
+  tripId: string;
+  disabled: boolean;
+  onSubmit: (name: string, token: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [pickup, setPickup] = useState<Selection | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  return (
+    <form
+      data-testid="passenger-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const check = validateName(name);
+        if (!check.ok) {
+          setFieldError(check.reason);
+          return;
+        }
+        if (!pickup) {
+          setFieldError("Search for the pickup address and select one of the suggestions.");
+          return;
+        }
+        setFieldError(null);
+        onSubmit(check.value, pickup.token);
+        setName("");
+        setPickup(null);
+        setResetSignal((n) => n + 1);
+      }}
+    >
+      <input aria-label="passenger name" value={name} onChange={(e) => setName(e.target.value)} />
+      <LocationPicker
+        label="Passenger pickup address"
+        purpose="pickup"
+        tripId={tripId}
+        disabled={disabled}
+        onSelect={setPickup}
+        resetSignal={resetSignal}
+      />
+      <button type="submit" disabled={disabled || !pickup}>Add passenger</button>
       {fieldError ? <span role="alert">{fieldError}</span> : null}
     </form>
   );

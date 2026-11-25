@@ -11,17 +11,11 @@ import type { Pool, PoolClient } from "pg";
 import { TerminalBusinessError, TransientFailure } from "../contracts/errors.ts";
 import { recordPreview } from "./preview-telemetry.ts";
 import { normalizeUuid } from "../contracts/index.ts";
-import {
-  isRetryableQueryError,
-  isTransportError,
-} from "../db/commit-outcome.ts";
-import { assertDataset, DatasetMismatch } from "../db/dataset.ts";
+import { classifyUnkeyedFailure } from "../db/classify.ts";
+import { assertDataset } from "../db/dataset.ts";
 import { datasetLock } from "../db/local-target.ts";
-import {
-  CommitOutcomeUnknown,
-  CommitRetryable,
-  withTransaction,
-} from "../db/transaction.ts";
+import { withTransaction } from "../db/transaction.ts";
+import { addressProvider } from "../locations/config.ts";
 import {
   ALGORITHM_VERSION,
   type MatchingResult,
@@ -29,7 +23,23 @@ import {
   computeMatch,
   projectMatchInput,
 } from "../matching/index.ts";
+import type { AddressRoster } from "../matching/address.ts";
+import { routingAdapterFor, routingPolicyFor } from "../routing/index.ts";
+import { addressAlgorithmId, parseSummary, type EstimateSummary } from "./address-evidence.ts";
+import { toAddressRoster, tripProvider } from "./address-roster.ts";
+import { computeAddressPreview, type AddressPreviewComputation } from "./address-preview.ts";
 import * as repo from "./repository.ts";
+
+/**
+ * The preview identifier a trip's mode expects. Zone trips keep the solver
+ * identifier. Address trips add the evidence schema and the routing policy of
+ * the provider the trip is pinned to by its venue, so a changed policy starts
+ * a new preview history. Reading it is local: it needs no provider call.
+ */
+export function expectedAlgorithm(trip: repo.TripRow): string {
+  if (trip.location_mode === "zone") return ALGORITHM_VERSION;
+  return addressAlgorithmId(routingPolicyFor(tripProvider(trip)));
+}
 
 // Test-only barrier for the preview stale window (C-13). The W4 concurrency
 // suite installs a one-shot hook that commits a roster mutation between the read
@@ -48,6 +58,10 @@ export interface PreviewResponse {
     algorithmVersion: string;
     optimal: MatchingResult;
     greedy: MatchingResult;
+    /** Address previews only: costs are in `costUnit` and `estimate` describes how they were observed. */
+    locationMode?: "address";
+    costUnit?: "detour_seconds";
+    estimate?: EstimateSummary;
   };
 }
 
@@ -61,11 +75,11 @@ async function readRoster(client: PoolClient, tripId: string): Promise<Roster> {
   return {
     drivers: drivers.map((d) => ({
       id: d.id,
-      zoneId: d.zone_id,
+      zoneId: d.zone_id as string,
       seatCapacity: d.seat_capacity,
       active: d.active,
     })),
-    passengers: requests.map((r) => ({ id: r.id, zoneId: r.zone_id, active: r.active })),
+    passengers: requests.map((r) => ({ id: r.id, zoneId: r.zone_id as string, active: r.active })),
     zoneCosts: costs.map((c) => ({
       driverZoneId: c.driver_zone_id,
       passengerZoneId: c.passenger_zone_id,
@@ -153,39 +167,23 @@ function toResponse(preview: repo.PreviewRow): PreviewResponse {
     // A corrupt cached preview is an invariant violation, not a servable 200.
     throw new Error("Stored preview result is malformed.");
   }
-  return {
-    httpStatus: 200,
-    body: {
-      previewId: preview.id,
-      baseVersion: preview.base_version,
-      algorithmVersion: preview.algorithm_version,
-      optimal: preview.optimal_result as MatchingResult,
-      greedy: preview.greedy_result as MatchingResult,
-    },
+  const body: PreviewResponse["body"] = {
+    previewId: preview.id,
+    baseVersion: preview.base_version,
+    algorithmVersion: preview.algorithm_version,
+    optimal: preview.optimal_result as MatchingResult,
+    greedy: preview.greedy_result as MatchingResult,
   };
+  if (preview.cost_unit === "detour_seconds") {
+    // A display read validates the public summary only; the private evidence is
+    // never loaded here (it is checked on publication and at commit).
+    body.locationMode = "address";
+    body.costUnit = "detour_seconds";
+    body.estimate = parseSummary(preview.summary);
+  }
+  return { httpStatus: 200, body };
 }
 
-/**
- * Classify a failure from the preview transactions. Transient database
- * conditions (lock/statement timeout, serialization, connection loss, a
- * retryable or unknown commit) become a retryable TransientFailure; a dataset
- * mismatch and a terminal business error pass through unchanged.
- */
-function classifyPreviewFailure(error: unknown): unknown {
-  if (error instanceof TerminalBusinessError) return error;
-  if (error instanceof DatasetMismatch) return error;
-  if (error instanceof TransientFailure) return error;
-  if (error instanceof CommitRetryable) {
-    return new TransientFailure("DATABASE_BUSY", "A serialization conflict occurred; retry.", error);
-  }
-  if (error instanceof CommitOutcomeUnknown) {
-    return new TransientFailure("DATABASE_UNAVAILABLE", "The database is unavailable; retry.", error);
-  }
-  if (isTransportError(error) || isRetryableQueryError(error)) {
-    return new TransientFailure("DATABASE_BUSY", "The database is busy; retry.", error);
-  }
-  return error;
-}
 
 /**
  * Publish or reuse a preview for the trip's current version. Throws
@@ -199,7 +197,7 @@ export async function publishPreview(
   try {
     return await publishPreviewInner(pool, tripIdRaw);
   } catch (error) {
-    throw classifyPreviewFailure(error);
+    throw classifyUnkeyedFailure(error);
   }
 }
 
@@ -215,9 +213,24 @@ async function publishPreviewInner(
     await assertDataset(client);
     const trip = await repo.readTrip(client, tripId);
     if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
-    const existing = await repo.findPreviewByKey(client, tripId, trip.version, ALGORITHM_VERSION);
-    const roster = existing ? undefined : await readRoster(client, tripId);
-    return { version: trip.version, existing, roster };
+    const algorithm = expectedAlgorithm(trip);
+    const existing = await repo.findPreviewByKey(client, tripId, trip.version, algorithm);
+    let roster: Roster | undefined;
+    let addressRoster: AddressRoster | undefined;
+    let provider: ReturnType<typeof tripProvider> | undefined;
+    if (!existing) {
+      if (trip.location_mode === "address") {
+        const [drivers, requests] = await Promise.all([
+          repo.listDrivers(client, tripId),
+          repo.listRequests(client, tripId),
+        ]);
+        addressRoster = toAddressRoster(trip, drivers, requests);
+        provider = tripProvider(trip);
+      } else {
+        roster = await readRoster(client, tripId);
+      }
+    }
+    return { version: trip.version, algorithm, existing, roster, addressRoster, provider };
   });
 
   if (snapshot.existing) {
@@ -226,9 +239,28 @@ async function publishPreviewInner(
   }
 
   // Step 2: compute optimal and greedy outside any lock; validated internally.
+  // An address preview first resolves its directed legs (the fixture adapter
+  // here), also outside any lock or transaction.
   const matcherStart = performance.now();
-  const computation = computeMatch(projectMatchInput(snapshot.roster!));
+  let computation: { algorithmVersion: string; optimal: MatchingResult; greedy: MatchingResult };
+  let addressResult: AddressPreviewComputation | undefined;
+  if (snapshot.addressRoster) {
+    if (addressProvider() !== snapshot.provider) {
+      throw new TransientFailure(
+        "ADDRESS_PROVIDER_UNAVAILABLE",
+        "This trip's address provider is not available, so a new estimate cannot be made.",
+      );
+    }
+    addressResult = await computeAddressPreview(snapshot.addressRoster, routingAdapterFor(snapshot.provider!));
+    computation = addressResult;
+  } else {
+    computation = computeMatch(projectMatchInput(snapshot.roster!));
+  }
   recordPreview({ cacheHit: false, matcherMs: Number((performance.now() - matcherStart).toFixed(3)) });
+  if (computation.algorithmVersion !== snapshot.algorithm) {
+    // The computed identifier and the key looked up under the lock must agree.
+    throw new Error("Computed preview identifier does not match the trip's expected identifier.");
+  }
 
   // Test-only barrier (C-13). Fires in the stale window AFTER the read snapshot
   // and compute, BEFORE the publication lock, so a test can commit a roster
@@ -252,13 +284,18 @@ async function publishPreviewInner(
       );
     }
     // Recheck the unique key: another request may have published concurrently.
-    const concurrent = await repo.findPreviewByKey(client, tripId, trip.version, ALGORITHM_VERSION);
+    const concurrent = await repo.findPreviewByKey(client, tripId, trip.version, snapshot.algorithm);
     const preview = concurrent ?? (await repo.insertPreview(client, {
       tripId,
       baseVersion: trip.version,
       algorithmVersion: computation.algorithmVersion,
       optimalResult: computation.optimal,
       greedyResult: computation.greedy,
+      address: addressResult && {
+        routingPolicy: addressResult.evidence.policy,
+        summary: addressResult.summary,
+        evidence: addressResult.evidence,
+      },
     }));
     return toResponse(preview);
   });

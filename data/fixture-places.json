@@ -1,0 +1,199 @@
+{
+  "revision": "fixture-catalog-1",
+  "note": "Invented places and explicit directed driving times in seconds. Rows are FROM, columns are TO. Generated once from coordinates (great-circle x1.35 at 9.5 m/s) plus a per-site directional offset in [-45,45] s; the committed numbers are the data. Places at the same coordinates have no entry for each other: that leg is resolved locally as an identical endpoint.",
+  "attribution": "GroupRide fixture data (fictional places and times)",
+  "places": [
+    {
+      "id": "fx-event-hall",
+      "label": "GROUPRIDE FIXTURE — Event Hall",
+      "street": "100 Fixture Plaza",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.01,
+      "lon": -97.01,
+      "precision": "building"
+    },
+    {
+      "id": "fx-alpha",
+      "label": "GROUPRIDE FIXTURE — Pickup Alpha",
+      "street": "11 Alpha Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.02,
+      "lon": -97.03,
+      "precision": "building"
+    },
+    {
+      "id": "fx-alpha-annex",
+      "label": "GROUPRIDE FIXTURE — Pickup Alpha Annex",
+      "street": "11 Alpha Court Annex",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.02,
+      "lon": -97.03,
+      "precision": "entrance"
+    },
+    {
+      "id": "fx-bravo",
+      "label": "GROUPRIDE FIXTURE — Pickup Bravo",
+      "street": "22 Bravo Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.03,
+      "lon": -97.02,
+      "precision": "building"
+    },
+    {
+      "id": "fx-charlie",
+      "label": "GROUPRIDE FIXTURE — Pickup Charlie",
+      "street": "33 Charlie Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.005,
+      "lon": -97.04,
+      "precision": "building"
+    },
+    {
+      "id": "fx-delta",
+      "label": "GROUPRIDE FIXTURE — Driver Start Delta",
+      "street": "44 Delta Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.04,
+      "lon": -97.01,
+      "precision": "building"
+    },
+    {
+      "id": "fx-echo",
+      "label": "GROUPRIDE FIXTURE — Driver Start Echo",
+      "street": "55 Echo Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.015,
+      "lon": -97.05,
+      "precision": "entrance"
+    },
+    {
+      "id": "fx-foxtrot",
+      "label": "GROUPRIDE FIXTURE — Pickup Foxtrot",
+      "street": "66 Foxtrot Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 29.99,
+      "lon": -97.025,
+      "precision": "building"
+    },
+    {
+      "id": "fx-city",
+      "label": "GROUPRIDE FIXTURE — Fixtureville",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.0,
+      "lon": -97.0,
+      "precision": "city"
+    },
+    {
+      "id": "fx-street-alpha",
+      "label": "GROUPRIDE FIXTURE — Alpha Court (street only)",
+      "street": "Alpha Court",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.0201,
+      "lon": -97.0301,
+      "precision": "street"
+    },
+    {
+      "id": "fx-main-street",
+      "label": "GROUPRIDE FIXTURE — Main Street",
+      "street": "Main Street",
+      "city": "Fixtureville",
+      "state": "TX",
+      "postcode": "00001",
+      "lat": 30.0001,
+      "lon": -97.0001,
+      "precision": "street"
+    }
+  ],
+  "seconds": {
+    "fx-event-hall": {
+      "fx-alpha": 316,
+      "fx-alpha-annex": 316,
+      "fx-bravo": 389,
+      "fx-charlie": 403,
+      "fx-delta": 504,
+      "fx-echo": 523,
+      "fx-foxtrot": 392
+    },
+    "fx-alpha": {
+      "fx-event-hall": 346,
+      "fx-bravo": 224,
+      "fx-charlie": 229,
+      "fx-delta": 418,
+      "fx-echo": 330,
+      "fx-foxtrot": 464
+    },
+    "fx-alpha-annex": {
+      "fx-event-hall": 346,
+      "fx-bravo": 224,
+      "fx-charlie": 229,
+      "fx-delta": 418,
+      "fx-echo": 330,
+      "fx-foxtrot": 464
+    },
+    "fx-bravo": {
+      "fx-event-hall": 344,
+      "fx-alpha": 254,
+      "fx-alpha-annex": 254,
+      "fx-charlie": 511,
+      "fx-delta": 179,
+      "fx-echo": 489,
+      "fx-foxtrot": 591
+    },
+    "fx-charlie": {
+      "fx-event-hall": 388,
+      "fx-alpha": 289,
+      "fx-alpha-annex": 289,
+      "fx-bravo": 436,
+      "fx-delta": 734,
+      "fx-echo": 194,
+      "fx-foxtrot": 344
+    },
+    "fx-delta": {
+      "fx-event-hall": 519,
+      "fx-alpha": 403,
+      "fx-alpha-annex": 403,
+      "fx-bravo": 239,
+      "fx-charlie": 659,
+      "fx-echo": 630,
+      "fx-foxtrot": 816
+    },
+    "fx-echo": {
+      "fx-event-hall": 568,
+      "fx-alpha": 240,
+      "fx-alpha-annex": 240,
+      "fx-bravo": 474,
+      "fx-charlie": 254,
+      "fx-delta": 660,
+      "fx-foxtrot": 493
+    },
+    "fx-foxtrot": {
+      "fx-event-hall": 362,
+      "fx-alpha": 509,
+      "fx-alpha-annex": 509,
+      "fx-bravo": 606,
+      "fx-charlie": 329,
+      "fx-delta": 771,
+      "fx-echo": 523
+    }
+  }
+}

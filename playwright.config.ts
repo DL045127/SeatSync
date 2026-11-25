@@ -31,6 +31,8 @@ export default defineConfig({
     env: {
       DATABASE_URL: TEST_DB,
       GROUPRIDE_USE_TEST_DATABASE: "1",
+      // The offline fixture provider: fictional places and driving times, no account or network.
+      GROUPRIDE_ADDRESS_PROVIDER: "fixture",
       NEXT_TELEMETRY_DISABLED: "1",
     },
   },

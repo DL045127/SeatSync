@@ -9,13 +9,17 @@ import type { Pool } from "pg";
 import { TerminalBusinessError } from "../contracts/errors.ts";
 import { normalizeCommit, normalizeUuid } from "../contracts/index.ts";
 import {
-  ALGORITHM_VERSION,
   type MatchingResult,
   type Roster,
   assertFeasible,
   projectMatchInput,
 } from "../matching/index.ts";
+import { projectAddressMatchInput } from "../matching/address.ts";
+import { routingPolicyFor } from "../routing/index.ts";
+import { validateEvidence } from "./address-evidence.ts";
+import { toAddressRoster, tripProvider } from "./address-roster.ts";
 import { type AppliedResult, type MutationResponse, runKeyedMutation } from "./mutation.ts";
+import { expectedAlgorithm } from "./preview.ts";
 import * as repo from "./repository.ts";
 
 // Test-only sensitivity mutant (C-01). When disabled, the stale-version guard
@@ -56,7 +60,9 @@ export function commitPreview(
         throw new TerminalBusinessError(404, "NOT_FOUND", "Preview not found in this trip.");
       }
       // A superseded algorithm cannot commit (old success receipts still replay).
-      if (preview.algorithm_version !== ALGORITHM_VERSION) {
+      // The expected identifier depends on the trip's mode and provider policy.
+      const algorithm = expectedAlgorithm(trip);
+      if (preview.algorithm_version !== algorithm) {
         throw new TerminalBusinessError(
           409,
           "ALGORITHM_CHANGED",
@@ -77,16 +83,33 @@ export function commitPreview(
       // roster/costs under the lock. Invalid stored JSON surfaces as an internal
       // error (no mutation), per C-14.
       const optimal = parseStoredResult(preview.optimal_result);
-      const roster = await readRoster(client, tripId);
-      const input = projectMatchInput(roster);
-      assertFeasible(input, optimal); // throws on any infeasibility
+      if (trip.location_mode === "address") {
+        // Rebuild the eligible edges from the stored frozen durations, after
+        // proving the private evidence matches the CURRENT roster, locations
+        // and thresholds. No provider call and no second solve happen here.
+        if (preview.cost_unit !== "detour_seconds") throw new Error("Stored preview has the wrong cost unit.");
+        const [drivers, requests] = await Promise.all([
+          repo.listDrivers(client, tripId),
+          repo.listRequests(client, tripId),
+        ]);
+        const addressRoster = toAddressRoster(trip, drivers, requests);
+        const legs = validateEvidence(
+          await repo.findPreviewEvidence(client, tripId, preview.id),
+          addressRoster,
+          routingPolicyFor(tripProvider(trip)),
+        );
+        assertFeasible(projectAddressMatchInput(addressRoster, legs).input, optimal);
+      } else {
+        const roster = await readRoster(client, tripId);
+        assertFeasible(projectMatchInput(roster), optimal); // throws on any infeasibility
+      }
 
       // Copy the stored optimal assignments atomically at version v+1.
       const committedVersion = trip.version + 1;
       await repo.commitPlan(client, {
         tripId,
         previewId: preview.id,
-        algorithmVersion: ALGORITHM_VERSION,
+        algorithmVersion: algorithm,
         committedVersion,
         assignments: optimal.assignments.map((a) => ({
           requestId: a.passengerId,
@@ -102,6 +125,7 @@ export function commitPreview(
           mutationVersion: committedVersion,
           matchedCount: optimal.matchedCount,
           totalCost: optimal.totalCost,
+          ...(trip.location_mode === "address" ? { costUnit: "detour_seconds" } : {}),
           operation: { key, outcome: "applied" },
         },
       };
@@ -128,11 +152,11 @@ async function readRoster(
   return {
     drivers: drivers.map((d) => ({
       id: d.id,
-      zoneId: d.zone_id,
+      zoneId: d.zone_id as string,
       seatCapacity: d.seat_capacity,
       active: d.active,
     })),
-    passengers: requests.map((r) => ({ id: r.id, zoneId: r.zone_id, active: r.active })),
+    passengers: requests.map((r) => ({ id: r.id, zoneId: r.zone_id as string, active: r.active })),
     zoneCosts: costs.map((c) => ({
       driverZoneId: c.driver_zone_id,
       passengerZoneId: c.passenger_zone_id,

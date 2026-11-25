@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { PendingOperation } from "./trips/reducer.ts";
-import { normalizeCreateTrip } from "../contracts/index.ts";
+import { normalizeCreateTrip, type NormalizedCreateTrip } from "../contracts/index.ts";
+import { LocationPicker, type Selection } from "./locations/LocationPicker.tsx";
 import {
   type OperationResponse,
   claimSlot,
@@ -22,6 +23,11 @@ export default function Home() {
   const [name, setName] = useState("");
   const [destinationLabel, setDestinationLabel] = useState("");
   const [departAt, setDepartAt] = useState("");
+  // Zone trips are the default and unchanged. An address trip carries a venue
+  // chosen from search; its signed selection token is the only venue input.
+  const [mode, setMode] = useState<"zone" | "address">("zone");
+  const [venue, setVenue] = useState<Selection | null>(null);
+  const [pickerReset, setPickerReset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Storage availability is decided once in the lazy initializer (SSR-safe:
@@ -54,7 +60,10 @@ export default function Home() {
         body: JSON.stringify(op.normalizedBody),
         cache: "no-store",
       });
-      const body = (await res.json().catch(() => ({}))) as OperationResponse & { id?: string; error?: { message: string } };
+      const body = (await res.json().catch(() => ({}))) as OperationResponse & {
+        id?: string;
+        error?: { code?: string; message: string };
+      };
       // ISSUE-022: resolve ONLY on a receipt-backed terminal outcome for this
       // key. A bare 500, a 503, an unknown outcome, a key-reuse 409, or a
       // mismatched-key 200 all retain the operation for same-key retry.
@@ -68,6 +77,11 @@ export default function Home() {
           return;
         }
         setError(body.error?.message ?? `Creation rejected (${res.status}).`);
+        // A rejected selection (expired, or from before a reset) must be searched again.
+        if (body.error?.code === "LOCATION_SELECTION_INVALID") {
+          setVenue(null);
+          setPickerReset((n) => n + 1);
+        }
         return;
       }
       setPending(op);
@@ -103,11 +117,28 @@ export default function Home() {
     // so an impossible date (2026-02-30), an over-length label, or any other
     // contract violation is caught here — the same rules the server applies —
     // and never reaches storage or the network. The stored body is canonical.
-    let normalizedBody: { name: string; destinationLabel: string; departAt: string };
+    let normalizedBody: NormalizedCreateTrip;
     try {
-      normalizedBody = normalizeCreateTrip({ name, destinationLabel, departAt });
+      if (mode === "address") {
+        if (!venue) {
+          setError("Search for the venue and select one of the suggestions.");
+          return;
+        }
+        normalizedBody = normalizeCreateTrip({
+          name,
+          departAt,
+          locationMode: "address",
+          venueSelectionToken: venue.token,
+        });
+      } else {
+        normalizedBody = normalizeCreateTrip({ name, destinationLabel, departAt });
+      }
     } catch {
-      setError("Enter a valid name, destination, and ISO 8601 departure (with offset).");
+      setError(
+        mode === "address"
+          ? "Enter a valid name and ISO 8601 departure (with offset)."
+          : "Enter a valid name, destination, and ISO 8601 departure (with offset).",
+      );
       return;
     }
     const op: PendingOperation = {
@@ -164,19 +195,49 @@ export default function Home() {
           <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
         </label>
         <label>
-          Destination
-          <input
-            value={destinationLabel}
-            onChange={(e) => setDestinationLabel(e.target.value)}
-            required
-            maxLength={120}
-          />
+          Trip type
+          <select
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value === "address" ? "address" : "zone");
+              // Leaving or entering address mode discards the venue: the field is
+              // rebuilt blank, so the parent must not keep a token for it (ISSUE-056).
+              setVenue(null);
+              setPickerReset((n) => n + 1);
+            }}
+            disabled={busy}
+          >
+            <option value="zone">Zones</option>
+            <option value="address">Addresses</option>
+          </select>
         </label>
+        {mode === "zone" ? (
+          <label>
+            Destination
+            <input
+              value={destinationLabel}
+              onChange={(e) => setDestinationLabel(e.target.value)}
+              required
+              maxLength={120}
+            />
+          </label>
+        ) : (
+          <LocationPicker
+            label="Venue"
+            purpose="venue"
+            disabled={busy}
+            onSelect={setVenue}
+            resetSignal={pickerReset}
+          />
+        )}
         <label>
           Departure (ISO 8601 with offset, e.g. 2026-03-01T09:30:00+00:00)
           <input value={departAt} onChange={(e) => setDepartAt(e.target.value)} required />
         </label>
-        <button type="submit" disabled={busy || storageBlocked || !!pending || !!slotOwnedByTrip}>
+        <button
+          type="submit"
+          disabled={busy || storageBlocked || !!pending || !!slotOwnedByTrip || (mode === "address" && !venue)}
+        >
           {busy ? "Creating…" : "Create trip"}
         </button>
       </form>

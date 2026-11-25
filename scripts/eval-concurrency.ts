@@ -66,8 +66,8 @@ async function readRoster(client: PoolClient, tripId: string): Promise<Roster> {
     repo.listZoneCosts(client),
   ]);
   return {
-    drivers: drivers.map((d) => ({ id: d.id, zoneId: d.zone_id, seatCapacity: d.seat_capacity, active: d.active })),
-    passengers: requests.map((r) => ({ id: r.id, zoneId: r.zone_id, active: r.active })),
+    drivers: drivers.map((d) => ({ id: d.id, zoneId: d.zone_id as string, seatCapacity: d.seat_capacity, active: d.active })),
+    passengers: requests.map((r) => ({ id: r.id, zoneId: r.zone_id as string, active: r.active })),
     zoneCosts: costs.map((c) => ({ driverZoneId: c.driver_zone_id, passengerZoneId: c.passenger_zone_id, cost: c.cost })),
   };
 }
