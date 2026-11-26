@@ -61,7 +61,7 @@ test("an invite lets guests join both roles and recovers a lost registration rep
   }
 });
 
-test("address invite selections are scoped to the invite and register in the organizer roster", async ({ page }) => {
+test("address invite selections are scoped to the invite and a late guest triggers a rematch", async ({ page, browser }) => {
   await page.goto("/");
   await page.getByLabel("Trip name").fill("Address invitation");
   await page.getByRole("combobox", { name: "Trip type" }).selectOption("address");
@@ -101,6 +101,40 @@ test("address invite selections are scoped to the invite and register in the org
   await page.goto(organizerUrl);
   await expect(page.getByText(/Dana \(GROUPRIDE FIXTURE — Driver Start Delta\)/)).toHaveCount(1);
   await expect(page.getByText(/Pat \(GROUPRIDE FIXTURE — Pickup Alpha\)/)).toHaveCount(1);
+
+  const preview = page.getByRole("button", { name: "Preview", exact: true });
+  const save = page.getByRole("button", { name: "Save plan", exact: true });
+  const status = page.getByTestId("trip-status");
+  const savedRiders = page.getByTestId("saved-assignments").getByRole("article", { name: "Dana" }).getByRole("listitem");
+  await preview.click();
+  await save.click();
+  await expect(savedRiders).toHaveText(/Pat.*extra 3 min 50 s/);
+
+  const lateGuest = await browser.newPage();
+  try {
+    await lateGuest.goto(new URL(`/join/${invite}`, organizerUrl).href);
+    await lateGuest.getByLabel("Name", { exact: true }).fill("Brooke");
+    await lateGuest.getByRole("combobox", { name: "Pickup address" }).fill("pickup bravo");
+    await lateGuest.getByRole("listbox").getByRole("option", { name: /Pickup Bravo —/ }).click();
+    await lateGuest.getByRole("button", { name: "Join as passenger" }).click();
+    await expect(lateGuest.getByText(/You joined as a passenger/)).toBeVisible();
+  } finally {
+    await lateGuest.close();
+  }
+
+  await page.reload();
+  await expect(status).toContainText("Needs a new plan");
+  await expect(page.getByTestId("saved-assignments")).toHaveCount(0);
+  await expect(page.getByText(/Brooke \(GROUPRIDE FIXTURE — Pickup Bravo\)/)).toHaveCount(1);
+  await preview.click();
+  await save.click();
+  await expect(savedRiders).toHaveText(/Brooke.*extra 1 min 4 s/);
+  await page.reload();
+  // One seat. The fixture gives Bravo 239 + 344 - 519 = 64 seconds versus Alpha's 230.
+  await expect(status).toContainText("1 min 4 s (64 s)");
+  await expect(savedRiders).toHaveText(/Brooke.*extra 1 min 4 s/);
+  await expect(page.getByTestId("saved-unassigned")).toHaveText("Unassigned: Pat");
+
   const invalid = await page.goto("/join/" + crypto.randomUUID());
   expect(invalid?.status()).toBe(404);
 });

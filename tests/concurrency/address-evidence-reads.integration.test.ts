@@ -4,7 +4,7 @@
 // or from counts of required legs; none comes from the code under test.
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import type { Pool } from "pg";
+import type { Pool, QueryResult } from "pg";
 import { createPool } from "../../src/db/pool.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
@@ -259,31 +259,42 @@ describe("L-12: the serialized responses, the SQL, and the policy upgrade", () =
     expect(allKeys(cold.estimate).has("0")).toBe(false);
   }, 90_000);
 
-  test("dashboard and stored-hit reads never select the evidence column (captured SQL)", async () => {
+  test("the dashboard and stored preview hit receive only their public columns from PostgreSQL", async () => {
     routing = installRouting();
     const { tripId } = await smallTrip("sq");
     const preview = await publishPreview(pool, tripId);
     // Commit first, so the dashboard has a committed preview whose summary it must read.
     expect((await commitPreview(pool, tripId, key(), { previewId: preview.body.previewId })).httpStatus).toBe(200);
-    await publishPreview(pool, tripId); // a preview of the new version, so the next one is a stored HIT
-    const statements: string[] = [];
+    const currentPreview = await publishPreview(pool, tripId);
+    const projections: string[][] = [];
     const recording = createPool(APP, 1);
     const realConnect = recording.connect.bind(recording);
+    const instrumentedClients = new WeakSet<object>();
     (recording as unknown as { connect: () => Promise<unknown> }).connect = async () => {
-      const client = (await realConnect()) as { query: (...a: unknown[]) => Promise<unknown> };
+      const client = (await realConnect()) as { query: (...args: unknown[]) => Promise<QueryResult> };
+      if (instrumentedClients.has(client)) return client;
+      instrumentedClients.add(client);
       const query = client.query.bind(client);
-      client.query = (...args: unknown[]) => {
-        if (typeof args[0] === "string") statements.push(args[0]);
-        return query(...args);
+      client.query = async (...args: unknown[]) => {
+        const result = await query(...args);
+        if (typeof args[0] === "string" && /\bmatch_previews\b/i.test(args[0])) {
+          projections.push(result.fields.map(field => field.name).sort());
+        }
+        return result;
       };
       return client;
     };
     try {
-      await publishPreview(recording, tripId); // a stored hit
-      await getTripSnapshot(recording, tripId); // the dashboard
-      const touching = statements.filter((s) => /match_previews/i.test(s));
-      expect(touching.length).toBeGreaterThan(1);
-      for (const sql of touching) expect(sql, sql).not.toMatch(/\bevidence\b/i);
+      const hit = await publishPreview(recording, tripId);
+      expect(hit.body).toEqual(currentPreview.body);
+      expect(projections.splice(0)).toEqual([[
+        "algorithm_version", "base_version", "cost_unit", "greedy_result", "id",
+        "optimal_result", "routing_policy", "summary", "trip_id",
+      ]]);
+
+      const dashboard = await getTripSnapshot(recording, tripId);
+      expect(dashboard).toMatchObject({ status: "assigned", estimate: preview.body.estimate });
+      expect(projections).toEqual([["routing_policy", "summary"]]);
     } finally {
       await recording.end();
     }

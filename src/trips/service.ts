@@ -3,7 +3,7 @@
 // the shared keyed-mutation helper. Roster changes follow whole-plan
 // invalidation (docs/ARCHITECTURE.md sections 4 and 6).
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { StoredDataError, TerminalBusinessError } from "../contracts/errors.ts";
 import {
@@ -17,7 +17,9 @@ import {
   normalizeCreateTrip,
   normalizeEditDriver,
   normalizeEditRequest,
+  normalizeGuestLeave,
   normalizeUuid,
+  type GuestTripStatus,
 } from "../contracts/index.ts";
 import { verifyAttachment } from "../locations/selection-service.ts";
 import { parseStoredSnapshot, type LocationSnapshot } from "../locations/snapshot.ts";
@@ -299,20 +301,23 @@ export async function addDriver(
       if ((await repo.countDrivers(client, tripId)) >= LIMITS.driversPerTrip) {
         throw new TerminalBusinessError(422, "ROSTER_LIMIT", "Driver record limit reached.");
       }
+      const leaveToken = byInvite ? randomUUID() : undefined;
+      const guestLeaveHash = leaveToken ? hashGuestToken(leaveToken) : undefined;
       const driver = await repo.insertDriver(
         client,
         isAddressAddDriver(body)
           ? {
               tripId,
+              guestLeaveHash,
               location: start,
               maxDetourMinutes: body.maxDetourMinutes,
               name: body.name,
               seatCapacity: body.seatCapacity,
             }
-          : { tripId, zoneId: body.zoneId, name: body.name, seatCapacity: body.seatCapacity },
+          : { tripId, guestLeaveHash, zoneId: body.zoneId, name: body.name, seatCapacity: body.seatCapacity },
       );
       const version = await applyRosterChange(client, locked);
-      return appliedRoster(key, 201, { id: driver.id, mutationVersion: version });
+      return appliedRoster(key, 201, { id: driver.id, mutationVersion: version, ...(leaveToken ? { leaveToken } : {}) });
     },
     makeRequestId: requestId,
   });
@@ -350,14 +355,64 @@ export async function addRequest(
       if ((await repo.countRequests(client, tripId)) >= LIMITS.passengersPerTrip) {
         throw new TerminalBusinessError(422, "ROSTER_LIMIT", "Passenger record limit reached.");
       }
+      const leaveToken = byInvite ? randomUUID() : undefined;
+      const guestLeaveHash = leaveToken ? hashGuestToken(leaveToken) : undefined;
       const request = await repo.insertRequest(
         client,
         isAddressAddRequest(body)
-          ? { tripId, location: pickup, name: body.name }
-          : { tripId, zoneId: body.zoneId, name: body.name },
+          ? { tripId, guestLeaveHash, location: pickup, name: body.name }
+          : { tripId, guestLeaveHash, zoneId: body.zoneId, name: body.name },
       );
       const version = await applyRosterChange(client, locked);
-      return appliedRoster(key, 201, { id: request.id, mutationVersion: version });
+      return appliedRoster(key, 201, { id: request.id, mutationVersion: version, ...(leaveToken ? { leaveToken } : {}) });
+    },
+    makeRequestId: requestId,
+  });
+}
+
+function hashGuestToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export async function getGuestTripStatus(pool: Pool, inviteRaw: string, rawBody: unknown): Promise<GuestTripStatus> {
+  const inviteId = normalizeUuid(inviteRaw);
+  const { role, token } = normalizeGuestLeave(rawBody);
+  const tokenHash = hashGuestToken(token);
+  return withTransaction(pool, "read", async client => {
+    await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
+    await assertDataset(client);
+    const trip = await repo.readTrip(client, inviteId, true);
+    const guest = trip && await repo.findGuestRegistration(client, trip.id, role, tokenHash);
+    if (!trip || !guest) throw new TerminalBusinessError(404, "NOT_FOUND", "This private registration link is invalid.");
+    if (!guest.active) return { state: "left" };
+    if (trip.status !== "assigned") return { state: "awaiting_plan" };
+    return { state: "saved_plan", assignedCount: await repo.countGuestAssignments(client, trip.id, role, guest.id) };
+  });
+}
+
+export function leaveTrip(pool: Pool, inviteRaw: string, keyRaw: string, rawBody: unknown): Promise<MutationResponse> {
+  const inviteId = normalizeUuid(inviteRaw);
+  const key = normalizeUuid(keyRaw);
+  const body = normalizeGuestLeave(rawBody);
+  const { role } = body;
+  const tokenHash = hashGuestToken(body.token);
+  return runKeyedMutation({
+    pool,
+    request: {
+      requestKey: key,
+      method: "POST",
+      canonicalRoute: `/api/invites/${inviteId}/leave`,
+      normalizedBody: { role, tokenHash },
+    },
+    lockTrip: client => lockTripOr404(client, inviteId, true),
+    work: async ({ client, locked: trip }) => {
+      const guest = await repo.findGuestRegistration(client, trip.id, role, tokenHash);
+      if (!guest) throw new TerminalBusinessError(404, "NOT_FOUND", "This private registration link is invalid.");
+      if (!guest.active) return appliedRoster(key, 200, { mutationVersion: trip.version });
+      const deactivate = role === "driver" ? repo.cancelDriver : repo.withdrawRequestRow;
+      await deactivate(client, trip.id, guest.id);
+      const mutationVersion = await applyRosterChange(client, trip);
+      return appliedRoster(key, 200, { mutationVersion });
     },
     makeRequestId: requestId,
   });

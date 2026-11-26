@@ -11,9 +11,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { Pool } from "pg";
 import { createPool } from "../../src/db/pool.ts";
+import { searchLocations } from "../../src/locations/selection-service.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
+import { __setFaultHook } from "../../src/trips/mutation.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
-import { editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { addRequest, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
 import {
   APP,
   SETUP,
@@ -44,6 +46,69 @@ afterEach(async () => {
 
 const nameOf = (snapshot: NonNullable<Awaited<ReturnType<typeof getTripSnapshot>>>, id: string) =>
   [...snapshot.drivers, ...snapshot.requests].find((m) => m.id === id)?.name;
+
+test("a guest joining by invitation and a competing organizer commit serialize on the same trip row", async () => {
+  const tripId = await createAddressTrip(pool);
+  await registerDriver(pool, tripId, "Dana", "Driver Start Delta", 1);
+  await registerPassenger(pool, tripId, "Pat", "Pickup Alpha");
+  const first = await publishPreview(pool, tripId);
+  expect((await commitPreview(pool, tripId, key(), { previewId: first.body.previewId })).httpStatus).toBe(200);
+  const saved = (await getTripSnapshot(pool, tripId))!;
+  expect(saved).toMatchObject({ status: "assigned", totals: { matched: 1, totalCost: 230 } });
+  const reviewed = await publishPreview(pool, tripId);
+  expect(reviewed.body.baseVersion).toBe(saved.version);
+
+  const { body: suggestions } = await searchLocations(pool, { query: "pickup bravo", purpose: "pickup" }, undefined, undefined, saved.inviteId);
+  const pickupSelectionToken = suggestions.suggestions.find(place => place.label === "GROUPRIDE FIXTURE — Pickup Bravo")?.token;
+  expect(pickupSelectionToken).toBeTypeOf("string");
+  const registrationBody = { name: "Brooke", pickupSelectionToken };
+  const registrationKey = key();
+  const commitKey = key();
+  const organizer = createPool(APP, 1);
+  let releaseGuest!: () => void;
+  const guestCanCommit = new Promise<void>(resolve => { releaseGuest = resolve; });
+  let guestPid: number | undefined;
+  const clearHook = __setFaultHook(async (point, client) => {
+    if (point !== "before-success-commit" || guestPid !== undefined) return;
+    guestPid = (await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    await guestCanCommit;
+  });
+  const pending: Promise<unknown>[] = [];
+  try {
+    const organizerPid = (await organizer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    const guest = addRequest(pool, saved.inviteId, registrationKey, registrationBody, true);
+    pending.push(guest);
+    await expect.poll(() => guestPid, { timeout: 3000 }).toBeTypeOf("number");
+
+    const commit = commitPreview(organizer, tripId, commitKey, { previewId: reviewed.body.previewId });
+    pending.push(commit);
+    await expect.poll(async () => {
+      const result = await admin.query<{ blockers: number[] }>("SELECT pg_blocking_pids($1) AS blockers", [organizerPid]);
+      return result.rows[0].blockers;
+    }, { interval: 10, timeout: 3000 }).toContain(guestPid);
+    releaseGuest();
+
+    const [joined, rejected] = await Promise.all([guest, commit]);
+    expect(joined).toMatchObject({ httpStatus: 201, replayed: false, body: { mutationVersion: saved.version + 1 } });
+    expect(rejected).toMatchObject({ httpStatus: 409, body: { error: { code: "STALE_VERSION" }, operation: { key: commitKey, outcome: "not_applied" } } });
+    const replay = await addRequest(pool, saved.inviteId, registrationKey, registrationBody, true);
+    expect(replay).toMatchObject({ httpStatus: 201, replayed: true, body: joined.body });
+    const reloaded = (await getTripSnapshot(organizer, tripId))!;
+    expect(reloaded).toMatchObject({ version: saved.version + 1, status: "needs_rematch", assignments: [] });
+    expect(reloaded.requests.map(request => request.name).sort()).toEqual(["Brooke", "Pat"]);
+    const { rows } = await admin.query("SELECT request_key, outcome, http_status FROM mutation_receipts WHERE request_key IN ($1, $2)", [registrationKey, commitKey]);
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(expect.arrayContaining([
+      { request_key: registrationKey, outcome: "applied", http_status: 201 },
+      { request_key: commitKey, outcome: "not_applied", http_status: 409 },
+    ]));
+  } finally {
+    releaseGuest();
+    clearHook();
+    await Promise.allSettled(pending);
+    await organizer.end();
+  }
+});
 
 describe("one driver, one passenger: 230 seconds", () => {
   test("preview, stored hit, commit and reload agree on 230 s with its meaning and provenance", async () => {
@@ -221,30 +286,5 @@ describe("commit trusts only evidence that matches the current roster", () => {
     process.env.GROUPRIDE_ADDRESS_PROVIDER = "off";
     await expect(publishPreview(pool, tripId)).rejects.toMatchObject({ code: "ROUTING_UNAVAILABLE" });
     expect((await admin.query("SELECT 1 FROM match_previews")).rowCount).toBe(1); // nothing partial published
-  });
-
-  test("dashboard and stored-hit reads never select the private evidence column", async () => {
-    const { tripId } = await previewed();
-    const statements: string[] = [];
-    const recording = createPool(APP, 1);
-    const realConnect = recording.connect.bind(recording);
-    (recording as unknown as { connect: () => Promise<unknown> }).connect = async () => {
-      const client = (await realConnect()) as { query: (...a: unknown[]) => Promise<unknown> };
-      const query = client.query.bind(client);
-      client.query = (...args: unknown[]) => {
-        if (typeof args[0] === "string") statements.push(args[0]);
-        return query(...args);
-      };
-      return client;
-    };
-    try {
-      await publishPreview(recording, tripId); // a stored hit
-      await getTripSnapshot(recording, tripId); // the dashboard
-      const touchingPreviews = statements.filter((s) => /match_previews/i.test(s));
-      expect(touchingPreviews.length).toBeGreaterThan(0);
-      for (const sql of touchingPreviews) expect(sql, sql).not.toMatch(/\bevidence\b/i);
-    } finally {
-      await recording.end();
-    }
   });
 });

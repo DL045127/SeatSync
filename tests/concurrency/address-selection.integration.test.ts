@@ -426,12 +426,12 @@ describe("L-04 reuse, identity and lifetime caps", () => {
 // ---- HTTP-level boundary: 400 and 403 never create a receipt --------------------
 
 describe("HTTP boundary", () => {
-  test("EVERY write route refuses a cross-site request with 403 before any keyed work", async () => {
+  test("trip and invite write, preview, and search endpoints reject cross-site requests without receipts", async () => {
     const { __resetAppPoolForTests } = await import("../../src/db/pool.ts");
     await __resetAppPoolForTests();
     const id = "00000000-0000-4000-8000-0000000000aa";
     const params = Promise.resolve({ tripId: id, driverId: id, requestId: id });
-    const modules = await Promise.all([
+    const [trips, drivers, driver, requests, request, preview, commit, clear, search, invites] = await Promise.all([
       import("../../src/app/api/trips/route.ts"),
       import("../../src/app/api/trips/[tripId]/drivers/route.ts"),
       import("../../src/app/api/trips/[tripId]/drivers/[driverId]/route.ts"),
@@ -439,19 +439,43 @@ describe("HTTP boundary", () => {
       import("../../src/app/api/trips/[tripId]/requests/[requestId]/route.ts"),
       import("../../src/app/api/trips/[tripId]/match/preview/route.ts"),
       import("../../src/app/api/trips/[tripId]/match/commit/route.ts"),
+      import("../../src/app/api/trips/[tripId]/match/clear/route.ts"),
       import("../../src/app/api/locations/search/route.ts"),
+      import("../../src/app/api/invites/[inviteId]/[action]/route.ts"),
     ]);
+    const trip = `/api/trips/${id}`;
+    const invite = `/api/invites/${id}`;
+    const routes = [
+      ["POST", "/api/trips", trips.POST],
+      ["POST", `${trip}/drivers`, (req: Request) => drivers.POST(req, { params })],
+      ["PATCH", `${trip}/drivers/${id}`, (req: Request) => driver.PATCH(req, { params })],
+      ["POST", `${trip}/requests`, (req: Request) => requests.POST(req, { params })],
+      ["PATCH", `${trip}/requests/${id}`, (req: Request) => request.PATCH(req, { params })],
+      ["POST", `${trip}/match/preview`, (req: Request) => preview.POST(req, { params })],
+      ["POST", `${trip}/match/commit`, (req: Request) => commit.POST(req, { params })],
+      ["POST", `${trip}/match/clear`, (req: Request) => clear.POST(req, { params })],
+      ["POST", "/api/locations/search", search.POST],
+      ...["search", "drivers", "requests"].map((action) => [
+        "POST", `${invite}/${action}`, (req: Request) => invites.POST(req, {
+          params: Promise.resolve({ inviteId: id, action }),
+        }),
+      ] as const),
+    ] as const;
     try {
       const before = await receipts();
-      const handlers = modules.map((m) => ((m as { POST?: unknown }).POST ?? (m as { PATCH?: unknown }).PATCH) as (r: Request, c: { params: Promise<unknown> }) => Promise<Response>);
-      expect(handlers).toHaveLength(8);
-      for (const [index, handler] of handlers.entries()) {
-        for (const headers of [{ origin: "https://evil.example" }, { "sec-fetch-site": "cross-site" }] as Array<Record<string, string>>) {
-          const response = await handler(
-            new Request("http://127.0.0.1:3100/x", { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1:3100", "idempotency-key": key(), ...headers }, body: "{}" }),
-            { params },
-          );
-          expect(response.status, `route ${index}`).toBe(403);
+      const rejectedHeaders: Record<string, string>[] = [
+        { origin: "https://evil.example" }, { "sec-fetch-site": "cross-site" },
+      ];
+      for (const [method, path, handler] of routes) {
+        for (const headers of rejectedHeaders) {
+          const response = await handler(new Request(`http://127.0.0.1:3100${path}`, {
+            method,
+            headers: { "content-type": "application/json", host: "127.0.0.1:3100", "idempotency-key": key(), ...headers },
+            body: "{}",
+          }));
+          const label = `${method} ${path} (${Object.keys(headers)[0]})`;
+          expect(response.status, label).toBe(403);
+          expect(await response.json(), label).toMatchObject({ error: { code: "CROSS_SITE_REQUEST" } });
         }
       }
       expect(await receipts()).toBe(before);

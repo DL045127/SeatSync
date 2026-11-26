@@ -212,8 +212,14 @@ function TripDashboard({ tripId }: { tripId: string }) {
   const [state, dispatch] = useReducer(tripReducer, tripId, initialState);
   const [message, setMessage] = useState<string | null>(null);
   const [readError, setReadError] = useState(false);
-  const [editing, setEditing] = useState<{ id: string; baseVersion: number } | null>(null);
+  const [editing, setEditing] = useState<{ participant: Driver | Passenger; baseVersion: number } | null>(null);
   const snapshot = state.snapshot as Snapshot | null;
+  const editParticipant = editing?.participant;
+  const currentParticipant = editParticipant && snapshot
+    ? ("seatCapacity" in editParticipant ? snapshot.drivers : snapshot.requests)
+        .find(participant => participant.id === editParticipant.id)
+    : undefined;
+  const editRoute = editParticipant ? participantRoute(editParticipant) : null;
   // The reducer holds the full accepted preview payload, so the rendered detail
   // and the committable reference are the same object (ISSUE-023). When the
   // reducer clears/rejects a preview, there is nothing to render.
@@ -222,12 +228,14 @@ function TripDashboard({ tripId }: { tripId: string }) {
   // Allocate once per read, alongside the reducer's get/start. A render or
   // effect replay can still see an older reducer value while starts are queued.
   const readGenRef = useRef(0);
+  const readsInFlight = useRef(0);
 
   const refresh = useCallback(async () => {
     const generation = ++readGenRef.current;
+    readsInFlight.current += 1;
     dispatch({ type: "get/start" });
     try {
-      const res = await fetch(`/api/trips/${tripId}`, { cache: "no-store" });
+      const res = await fetch(`/api/trips/${tripId}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
       if (!res.ok) throw new Error("Trip read failed.");
       const body = (await res.json()) as Snapshot;
       if (generation === readGenRef.current) setReadError(false);
@@ -236,6 +244,8 @@ function TripDashboard({ tripId }: { tripId: string }) {
       // ISSUE-023: a failed read must be visible and offer retry, not loop on
       // the loading message.
       if (generation === readGenRef.current) setReadError(true);
+    } finally {
+      readsInFlight.current -= 1;
     }
   }, [tripId]);
 
@@ -248,6 +258,19 @@ function TripDashboard({ tripId }: { tripId: string }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [tripId, refresh]);
+
+  useEffect(() => {
+    if (state.pendingOperation) return;
+    function refreshVisibleTrip() {
+      if (document.visibilityState === "visible" && readsInFlight.current === 0) void refresh();
+    }
+    const timer = setInterval(refreshVisibleTrip, 2_000);
+    document.addEventListener("visibilitychange", refreshVisibleTrip);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshVisibleTrip);
+    };
+  }, [refresh, state.pendingOperation]);
 
   // ISSUE-023: when the version floor rises past the shown snapshot (e.g. a
   // newer preview/conflict raised it), fetch a current snapshot to replace the
@@ -338,9 +361,14 @@ function TripDashboard({ tripId }: { tripId: string }) {
     return false;
   }
 
-  function retryPending(): void {
+  async function retryPending(): Promise<void> {
     const op = state.pendingOperation;
-    if (op) void sendMutation({ key: op.key, method: op.method, canonicalRoute: op.canonicalRoute, normalizedBody: op.normalizedBody });
+    if (!op) return;
+    const saved = await sendMutation({ key: op.key, method: op.method, canonicalRoute: op.canonicalRoute, normalizedBody: op.normalizedBody });
+    if (saved && op.method === "PATCH" && op.canonicalRoute === editRoute &&
+        (op.normalizedBody as { details?: unknown }).details) {
+      setEditing(current => current === editing ? null : current);
+    }
   }
 
   const inFlight = useRef<{ generation: number; controller: AbortController } | null>(null);
@@ -435,13 +463,17 @@ function TripDashboard({ tripId }: { tripId: string }) {
   const nameOf = (members: Array<{ id: string; name: string }>, id: string) =>
     members.find((m) => m.id === id)?.name ?? id;
 
+  function participantRoute(participant: Driver | Passenger) {
+    const collection = "seatCapacity" in participant ? "drivers" : "requests";
+    return `/api/trips/${tripId}/${collection}/${participant.id}`;
+  }
+
   function rosterRow(participant: Driver | Passenger) {
     if (!snapshot) return null;
     const driver = "seatCapacity" in participant;
     const label = driver ? "driver" : "passenger";
     const disabled = !!pending || storageBlocked;
-    const isEditing = editing?.id === participant.id && editing.baseVersion === snapshot.version;
-    const route = `/api/trips/${tripId}/${driver ? "drivers" : "requests"}/${participant.id}`;
+    const isEditing = editRoute === participantRoute(participant);
     const location = participant.location?.label ?? participant.zoneId;
     return (
       <li key={participant.id}>
@@ -458,36 +490,20 @@ function TripDashboard({ tripId }: { tripId: string }) {
             {!isEditing && (
               <button type="button" disabled={disabled} aria-label={`Edit ${label} ${participant.name}`} onClick={() => {
                 setMessage(null);
-                setEditing({ id: participant.id, baseVersion: snapshot.version });
+                setEditing({ participant, baseVersion: snapshot.version });
               }}>
                 Edit {label}
               </button>
             )}
             <button type="button" disabled={!!pending} onClick={() => void sendMutation({
               method: "PATCH",
-              canonicalRoute: route,
+              canonicalRoute: participantRoute(participant),
               normalizedBody: { baseVersion: snapshot.version, active: false },
             })}>
               {driver ? "Cancel" : "Withdraw"}
             </button>
           </div>
         </div>
-        {isEditing && (
-          <ParticipantEditForm
-            participant={participant}
-            tripId={tripId}
-            disabled={disabled}
-            onCancel={() => setEditing(null)}
-            onSave={async details => {
-              const saved = await sendMutation({
-                method: "PATCH",
-                canonicalRoute: route,
-                normalizedBody: { baseVersion: editing.baseVersion, details },
-              });
-              if (saved) setEditing(current => current === editing ? null : current);
-            }}
-          />
-        )}
       </li>
     );
   }
@@ -518,6 +534,31 @@ function TripDashboard({ tripId }: { tripId: string }) {
           <button onClick={retryPending}>Retry</button>
         </section>
       ) : null}
+
+      {editing && editRoute && (
+        <ParticipantEditForm
+          key={editRoute}
+          participant={editing.participant}
+          currentParticipant={currentParticipant}
+          tripId={tripId}
+          disabled={!!pending || storageBlocked}
+          currentVersion={snapshot?.version}
+          baseVersion={editing.baseVersion}
+          onReview={version => {
+            setMessage(null);
+            setEditing({ ...editing, baseVersion: version });
+          }}
+          onCancel={() => setEditing(null)}
+          onSave={async details => {
+            const saved = await sendMutation({
+              method: "PATCH",
+              canonicalRoute: editRoute,
+              normalizedBody: { baseVersion: editing.baseVersion, details },
+            });
+            if (saved) setEditing(current => current === editing ? null : current);
+          }}
+        />
+      )}
 
       {snapshot ? (
         <>
@@ -657,24 +698,32 @@ function ZoneOptions() {
 }
 
 function ParticipantEditForm({
-  participant, tripId, disabled, onCancel, onSave,
+  participant, currentParticipant, tripId, disabled, currentVersion, baseVersion, onReview, onCancel, onSave,
 }: {
   participant: Driver | Passenger;
+  currentParticipant?: Driver | Passenger;
   tripId: string;
   disabled: boolean;
+  currentVersion?: number;
+  baseVersion: number;
+  onReview: (version: number) => void;
   onCancel: () => void;
   onSave: (details: Record<string, string | number>) => Promise<void>;
 }) {
   const [changeAddress, setChangeAddress] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
+  useEffect(() => nameInput.current?.focus(), []);
   const driver = "seatCapacity" in participant;
   const label = driver ? "driver" : "passenger";
   const address = participant.location;
+  const changed = currentVersion !== undefined && currentVersion !== baseVersion;
+  const canSave = !disabled && !changed && currentParticipant?.active && (!changeAddress || !!selection);
   return (
     <form className="participant-edit" aria-label={`Edit ${label} details`} onSubmit={event => {
       event.preventDefault();
-      if (disabled || (changeAddress && !selection)) return;
+      if (!canSave) return;
       const fields = new FormData(event.currentTarget);
       const checked = validateName(String(fields.get("name") ?? ""));
       if (!checked.ok) {
@@ -693,10 +742,25 @@ function ParticipantEditForm({
       setError(null);
       void onSave(details);
     }}>
-      <label>Name<input name="name" defaultValue={participant.name} required disabled={disabled} /></label>
+      <h2>Edit {label} {participant.name}</h2>
+      {currentVersion !== undefined && (!currentParticipant?.active ? (
+        <p role="status">This participant is no longer active. Your draft is still here.</p>
+      ) : changed && (
+        <section className="notice">
+          <p role="status">The trip changed while you were editing. Review the current details before saving your draft.</p>
+          <p>
+            Current registration for {currentParticipant.name} at {currentParticipant.location?.detail ?? currentParticipant.zoneId}
+            {"seatCapacity" in currentParticipant && ` · ${currentParticipant.seatCapacity} seats`}
+            {"seatCapacity" in currentParticipant && currentParticipant.maxDetourMinutes !== null &&
+              ` · ${currentParticipant.maxDetourMinutes} min detour limit`}
+          </p>
+          <button type="button" disabled={disabled} onClick={() => onReview(currentVersion)}>Keep draft</button>
+        </section>
+      ))}
+      <label>Name<input ref={nameInput} name="name" defaultValue={participant.name} required disabled={disabled} /></label>
       {address ? (
         <>
-          <p>Current address: {address.detail}</p>
+          <p>Current address: {currentParticipant?.location?.detail ?? address.detail}</p>
           <label className="checkbox-label">
             <input type="checkbox" checked={changeAddress} disabled={disabled} onChange={event => {
               setChangeAddress(event.target.checked);
@@ -728,8 +792,8 @@ function ParticipantEditForm({
       )}
       {error && <p role="alert">{error}</p>}
       <div className="row-actions">
-        <button type="submit" disabled={disabled || (changeAddress && !selection)}>Save changes</button>
-        <button type="button" disabled={disabled} onClick={onCancel}>Cancel edit</button>
+        <button type="submit" disabled={!canSave}>Save changes</button>
+        <button type="button" onClick={onCancel} disabled={disabled}>Cancel edit</button>
       </div>
     </form>
   );

@@ -304,7 +304,7 @@ describe("L-02 upgrade of a W6 database", () => {
     expect((staleCommit.body as { error: { code: string } }).error.code).toBe("STALE_VERSION");
   });
 
-  test("a fresh install on an EMPTY database applies migrations 001 through 004, seeds the zones and creates one generation", async () => {
+  test("a fresh install on an EMPTY database applies migrations 001 through 005, seeds the zones and creates one generation", async () => {
     const empty = await quiesce();
     // Return the disposable test database to its pre-migration, empty state.
     await empty.query(`DROP TABLE assignments, match_previews, drivers, ride_requests, trips, mutation_receipts,
@@ -312,7 +312,7 @@ describe("L-02 upgrade of a W6 database", () => {
     expect((await empty.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public'")).rowCount).toBe(0);
     await runSetup(SETUP, testDatabase, "migrate"); // the same command the README tells a new installer to run
     const applied = (await empty.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name")).rows.map((r) => r.name);
-    expect(applied).toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql"]);
+    expect(applied).toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql"]);
     expect((await empty.query("SELECT count(*)::int AS n FROM zones")).rows[0].n).toBe(4);
     expect((await empty.query("SELECT count(*)::int AS n FROM dataset_generation")).rows[0].n).toBe(1);
     // Reapplying is safe and keeps the generation.
@@ -388,7 +388,9 @@ describe("L-02 upgrade of a W6 database", () => {
           (location_mode = 'zone' AND zone_id IS NOT NULL AND location IS NULL AND max_detour_minutes IS NULL)
           OR (location_mode = 'address' AND zone_id IS NULL AND location IS NOT NULL AND max_detour_minutes BETWEEN 0 AND 120));
         ALTER TABLE trips DROP COLUMN invite_id;
-        DELETE FROM schema_migrations WHERE name IN ('003_address_driver_limit.sql', '004_trip_invites.sql');`);
+        ALTER TABLE drivers DROP COLUMN guest_leave_hash;
+        ALTER TABLE ride_requests DROP COLUMN guest_leave_hash;
+        DELETE FROM schema_migrations WHERE name IN ('003_address_driver_limit.sql', '004_trip_invites.sql', '005_guest_leave.sql');`);
       await reader.query(
         `INSERT INTO drivers (trip_id, name, seat_capacity, location_mode, location, max_detour_minutes)
          VALUES ($1, 'Old', 1, 'address', $2::jsonb, NULL)`, [tripId, snapshot]);
@@ -399,7 +401,7 @@ describe("L-02 upgrade of a W6 database", () => {
       await reader.query("DELETE FROM drivers WHERE max_detour_minutes IS NULL");
       await runSetup(SETUP, testDatabase, "migrate");
       expect((await reader.query("SELECT name FROM schema_migrations ORDER BY name")).rows.map((r) => r.name))
-        .toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql"]);
+        .toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql"]);
       expect((await reader.query("SELECT count(*)::int AS n FROM drivers")).rows[0].n).toBe(1); // the valid driver survived
       const p = await reopen();
       await expect(insertDriverVia(p, tripId, snapshot)).rejects.toMatchObject({ code: "23514" });

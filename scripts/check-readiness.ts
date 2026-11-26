@@ -60,7 +60,8 @@ async function withServer(
 async function checkReady(origin: string, phase: string) {
   const page = await fetch(origin, { signal: AbortSignal.timeout(30_000) });
   assert.equal(page.status, 200, `${phase}: landing page`);
-  assert.match(await page.text(), /<h1>GroupRide<\/h1>/);
+  assert.ok(/<h1(?:\s[^>]*)?>Create a trip<\/h1>/.test(await page.text()),
+    `${phase}: landing page must show the Create a trip heading`);
   const health = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(30_000) });
   const body: unknown = await health.json();
   assert.equal(health.status, 200, `${phase}: health returned ${JSON.stringify(body)}`);

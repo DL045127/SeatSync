@@ -146,6 +146,20 @@ const editRequestSchema = z.union([
 const commitSchema = z.object({ previewId: canonicalUuid }).strict();
 const clearPlanSchema = z.object({ baseVersion: versionInt }).strict();
 
+const guestLeaveSchema = z.object({
+  role: z.enum(["driver", "passenger"]),
+  token: canonicalUuid,
+}).strict();
+
+export function normalizeGuestLeave(raw: unknown) {
+  const { role, token } = guestLeaveSchema.parse(raw);
+  return { role, token: normalizeUuid(token) };
+}
+
+export type GuestTripStatus =
+  | { state: "left" | "awaiting_plan" }
+  | { state: "saved_plan"; assignedCount: number };
+
 export function normalizeClearPlan(raw: unknown): { baseVersion: number } {
   return clearPlanSchema.parse(raw);
 }

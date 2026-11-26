@@ -133,13 +133,14 @@ export async function countRequests(client: PoolClient, tripId: string): Promise
 export async function insertDriver(
   client: PoolClient,
   driver:
+    (
     | { tripId: string; zoneId: string; name: string; seatCapacity: number }
-    | { tripId: string; location: unknown; maxDetourMinutes: number; name: string; seatCapacity: number },
+    | { tripId: string; location: unknown; maxDetourMinutes: number; name: string; seatCapacity: number }) & { guestLeaveHash?: string },
 ): Promise<DriverRow> {
   const address = "location" in driver;
   const result = await client.query<DriverRow>(
-    `INSERT INTO drivers (trip_id, zone_id, name, seat_capacity, location_mode, location, max_detour_minutes)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+    `INSERT INTO drivers (trip_id, zone_id, name, seat_capacity, location_mode, location, max_detour_minutes, guest_leave_hash)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
      RETURNING ${DRIVER_COLUMNS}`,
     [
       driver.tripId,
@@ -149,6 +150,7 @@ export async function insertDriver(
       address ? "address" : "zone",
       address ? JSON.stringify(driver.location) : null,
       address ? driver.maxDetourMinutes : null,
+      driver.guestLeaveHash,
     ],
   );
   return result.rows[0];
@@ -157,13 +159,14 @@ export async function insertDriver(
 export async function insertRequest(
   client: PoolClient,
   request:
+    (
     | { tripId: string; zoneId: string; name: string }
-    | { tripId: string; location: unknown; name: string },
+    | { tripId: string; location: unknown; name: string }) & { guestLeaveHash?: string },
 ): Promise<RequestRow> {
   const address = "location" in request;
   const result = await client.query<RequestRow>(
-    `INSERT INTO ride_requests (trip_id, zone_id, name, location_mode, location)
-     VALUES ($1, $2, $3, $4, $5::jsonb)
+    `INSERT INTO ride_requests (trip_id, zone_id, name, location_mode, location, guest_leave_hash)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6)
      RETURNING ${REQUEST_COLUMNS}`,
     [
       request.tripId,
@@ -171,6 +174,7 @@ export async function insertRequest(
       request.name,
       address ? "address" : "zone",
       address ? JSON.stringify(request.location) : null,
+      request.guestLeaveHash,
     ],
   );
   return result.rows[0];
@@ -247,6 +251,28 @@ export async function updateRequestDetails(
     [tripId, requestId, update.name, update.zoneId, JSON.stringify(update.location)],
   );
   return result.rowCount === 1;
+}
+
+export async function findGuestRegistration(
+  client: PoolClient, tripId: string, role: "driver" | "passenger", tokenHash: string,
+): Promise<{ id: string; active: boolean } | undefined> {
+  const table = role === "driver" ? "drivers" : "ride_requests";
+  const result = await client.query<{ id: string; active: boolean }>(
+    `SELECT id, active FROM ${table} WHERE trip_id = $1 AND guest_leave_hash = $2`,
+    [tripId, tokenHash],
+  );
+  return result.rows[0];
+}
+
+export async function countGuestAssignments(
+  client: PoolClient, tripId: string, role: "driver" | "passenger", guestId: string,
+): Promise<number> {
+  const column = role === "driver" ? "driver_id" : "request_id";
+  const result = await client.query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM assignments WHERE trip_id = $1 AND ${column} = $2`,
+    [tripId, guestId],
+  );
+  return result.rows[0].count;
 }
 
 export async function cancelDriver(
