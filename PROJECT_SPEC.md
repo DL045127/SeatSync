@@ -303,7 +303,7 @@ Before final submission, the team must:
 - Confirm the instructor and TA can access the repository.
 - Verify that the project can be executed from a clean setup.
 - Ensure documented validation inputs, commands, and results are present.
-- Submit the repository URL and final slide deck PDF together.
+- Submit the repository URL to [Demo & Code](deliverables/DEMO-AND-CODE.md) and the final slide deck PDF to [Writeup](deliverables/WRITEUP.md) by the shared Canvas due date.
 - Reserve a demonstration slot through Canvas.
 - Complete all changes before Canvas's available-until deadline.
 

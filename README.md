@@ -145,6 +145,8 @@ Open the same `/trips/<id>` URL in a second browser profile to see the stale-com
 
 ## Course deliverables
 
-The course requires a runnable GitHub repository accessible to staff, a short proposal PDF, a final slide deck PDF, and a live demonstration. Submit the required URL/PDFs and reserve a demo slot through Canvas by its deadlines. The final deck is the writeup; no separate written report is required.
+GroupRide is a solo final project by Derick Lee. The [contribution record](docs/EVIDENCE.md#attribution-and-contributions--rr-3) documents student and AI-agent work.
 
-The [proposal PDF](deliverables/proposal.pdf) and [six-slide presentation draft](deliverables/presentation-draft.pdf) are ready for student review. The deck must be transferred into the official Canvas template. The [W6 checklist](WORKPLAN.md#w6--clean-reproduction-and-submission) tracks the remaining course actions.
+The final assignments require a runnable GitHub repository accessible to staff, a final slide deck PDF, and a live demonstration. Submit the repository URL to [Demo & Code](deliverables/DEMO-AND-CODE.md) and the final slide PDF to [Writeup](deliverables/WRITEUP.md) by the shared Canvas due date. Reserve one slot per team on the demo sign-up sheet. The final deck serves as the writeup.
+
+The [six-slide writeup PDF](deliverables/final-project-writeup.pdf) follows the Canvas template and describes the current invitation demo. Review it before uploading to Canvas. The [W6 checklist](WORKPLAN.md#w6--clean-reproduction-and-submission) tracks the remaining course actions.

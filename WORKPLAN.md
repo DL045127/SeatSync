@@ -28,7 +28,7 @@ This is the execution and handoff record for the local CS 378AC carpool project.
 | Environment | Node v24.22.3 and npm 11.19.1 verified with Homebrew `node@24` first on `PATH`. The default shell still selects Node 26, which crashes on a missing simdjson dylib (ISSUE-002); prepend `$(brew --prefix node@24)/bin` to `PATH` for all project commands. Exact project versions are in `package.json`/`package-lock.json`. |
 | Blockers | Resolve ISSUE-062 before using personal pickup data. ISSUE-063 concerns configured HTTPS telemetry and ISSUE-004 concerns startup during offline reset. R3 remains deferred. |
 | Human review | The student accepted W1, reported the original W2 failure, and ran the corrected W2 suite. For A-4 the student observed matching previews across two tabs, persistence after reload and the stale-save review prompt, and accepted W3. A-3 (W2) and A-5 (W4) reviews are pending. For A-6 (W5), the three decisions are recorded. The student deferred independent inspection until after the technical work and will record what they checked before submission. [A-4 evidence](docs/EVIDENCE.md) |
-| External course tasks | Proposal and six-slide draft PDFs are prepared. Public GitHub read access was observed. Confirm team/partner access, Canvas deadlines and submissions, template, demo booking and student provenance. |
+| External course tasks | Derick Lee confirmed solo participation and demo booking. The six-slide writeup PDF is prepared for review. Confirm staff repository access, Canvas deadlines and submissions, and student provenance. |
 | Latest validation | The ISSUE-103 correction passed lint, typecheck, and production Chromium (39) against the designated PostgreSQL test database. The earlier correction passed matching (71) and unit (469), and the earlier independent review passed the database smoke test and PostgreSQL concurrency (289). [Correction evidence](docs/EVIDENCE.md#late-guest-registration-reply-correction) · [Independent review](docs/EVIDENCE.md#independent-review-of-private-registration-corrections) |
 
 The W3 commit includes the preview and commit services and routes, browser pages and reducer, demo script, Playwright configuration, and workflow tests. The W4 commit adds `tests/concurrency/races-recovery.integration.test.ts` and four test-only hooks across the commit, preview, repository, and trip service modules. The W5 checkpoint adds the three evaluation scripts (`scripts/eval-matching.ts`, `scripts/eval-concurrency.ts`, `scripts/eval-responsiveness.ts`), their `eval:*` npm commands, and the retained artifacts under `eval/`; preview instrumentation and the test-mode telemetry endpoint also ship in the application.
@@ -243,14 +243,17 @@ Student(s) must also complete these course deliverables and records:
 
 - [ ] Independently inspect/execute important agent-generated changes; retain two implementation episodes and a real consequential human correction/rejection/redesign.
 - [x] Record D-1/D-2 judgments, the ISSUE-007 debugging story, library versions, AI contributions and operating limitations.
-- [ ] Confirm the complete team roster, per-person contributions and the human correction decision for the episode record.
-- [x] Prepare the [proposal PDF](deliverables/proposal.pdf) and the [six-slide draft](deliverables/presentation-draft.pdf).
-- [ ] Confirm the Canvas deadline, review the proposal and record its actual submission.
-- [ ] Apply the supplied Canvas six-slide template to the draft, check the per-person credits and export the final deck.
-- [ ] Rehearse the successful workflow, edge/failure case, independent expected answer, decisions, attribution, and limitation; both teammates can explain the work.
+- [x] Confirm the student roster. Derick Lee is the sole student contributor.
+- [ ] Verify student and agent attribution and record the student’s rationale for a consequential correction.
+- [x] Prepare the [six-slide presentation draft](deliverables/presentation-draft.pdf).
+- [ ] Confirm the Canvas due date and available-until date for the final assignments.
+- [x] Fill the six sections of the Canvas template and export the [writeup PDF](deliverables/final-project-writeup.pdf) with the name, UT EID, repository URL, revision, and contributions.
+- [ ] Review and accept the exported writeup PDF before uploading it. If using an editable Google Slides copy, transfer the completed content before exporting the upload version.
+- [x] Book the solo demo slot. Derick Lee confirmed the booking.
+- [ ] Rehearse the solo demo, including the successful workflow, an edge or failure case, an independent expected answer, the decisions, attribution, and a limitation.
 - [x] Verify public repository read access and screen the candidate and reachable Git history for course-material indicators. [W6 candidate audit](docs/EVIDENCE.md#w6-candidate-audit)
-- [ ] Confirm student account ownership, partner collaborator status and provenance of source, tests and data.
-- [ ] Submit the required repository URL/PDFs, reserve the demo slot, and finish the default-branch code/writeup before Canvas's available-until deadline. Record actual confirmations, not assumptions.
+- [ ] Confirm student account ownership, staff repository access, and provenance of the source, tests, and data.
+- [ ] Follow [Demo & Code](deliverables/DEMO-AND-CODE.md) to submit the repository URL. Follow [Writeup](deliverables/WRITEUP.md) to verify the cited revision and submit the PDF separately by the shared Canvas due date. Complete any updates before the available-until date and record the submission confirmations.
 
 ### Next product milestone — Searchable US pickups
 
