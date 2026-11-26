@@ -60,6 +60,25 @@ Run `npm run db:migrate` to add invitations to an existing local database. On th
 
 Keep the organizer dashboard URL private. The invite link shows trip details and accepts registrations from anyone holding it. The local server URL is reachable only on the host machine. To share across devices, serve GroupRide at a reachable HTTPS origin, configure `GROUPRIDE_TRUSTED_ORIGINS` for that origin, and open the organizer dashboard at that address before copying its invite link. The existing [trip data privacy issue](WORKPLAN.md#bugs-and-open-issues) remains relevant before using personal pickup data.
 
+### Run the invitation demo
+
+Use Node 24. With the database running, start a production app in one terminal. If a development server is already using port 3000, stop it first.
+
+```sh
+npm run build
+GROUPRIDE_ADDRESS_PROVIDER=fixture npm start
+```
+
+Leave the app running and start the walkthrough in a second terminal:
+
+```sh
+npm run demo:invites
+```
+
+If Chromium is missing, install it once with `npx playwright install chromium`. Use `npm run demo:invites -- --headed` to watch the browser. The script brings the saved plan to the front and waits for Enter when run from a terminal. Add `--port 3001` if GroupRide is listening on a different local port.
+
+The script creates one address trip at the fictional Event Hall and opens the real invitation link in five separate guest sessions. It simulates delivery in the browser instead of sending email or text messages. It previews, saves, and reloads a plan with two drivers, three passengers, and two matches with a total estimated pickup detour of 1 minute 22 seconds. It prints both the private organizer URL and guest link. Each run creates one additional trip and preserves existing trips. The script checks that fixture mode is active before searching. It uses zero Geoapify credits.
+
 ### Address trips with the offline fixture (checkpoint A, verified)
 
 Address trips let an organizer search for a venue, driver start addresses and passenger pickup addresses, then preview, save and reload a plan whose costs are estimated extra driving time. This checkpoint runs entirely offline against a shipped catalog of **fictional** places and driving times ([data/fixture-places.json](data/fixture-places.json)): no account, API key, network or geocoder. Checkpoint C exercises the routing adapter on loopback. The live provider pilot belongs to D.

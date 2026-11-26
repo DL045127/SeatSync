@@ -15,6 +15,7 @@
     "db:migrate": "tsx scripts/db.ts migrate",
     "demo:reset": "tsx scripts/db.ts reset",
     "demo": "tsx scripts/demo.ts",
+    "demo:invites": "node --import tsx scripts/demo-invites.ts",
     "test:setup": "node --test tests/setup.test.ts",
     "test:database": "vitest run --config vitest.config.ts",
     "test:matching": "vitest run --config vitest.matching.config.ts",

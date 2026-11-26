@@ -88,6 +88,30 @@ Review blobs are `966e503b94a3` for the migration, `048dd95a0ab8` for the trip s
 
 Lint, typecheck, the production build, 2 setup tests, 469 unit tests, the database test, 289 PostgreSQL concurrency tests, and 35 Chromium workflows passed. The initial concurrency run caught three assertions that pinned the old migration history and snapshot keys. Updated the expectations and used the W6 upgrade fixture to verify a distinct invite ID is added to an existing trip. The full concurrency rerun passed. Chromium verified both registration roles in both trip modes, the guest token scope, an invalid link, the organizer preview, and exact-key retry following a lost response. External hosting and student inspection remain pending.
 
+### Automated invitation demo
+
+The student asked for a script that creates a trip, shares its invitation, and onboards fictional drivers and passengers. Drive the organizer and guest browser interfaces, verify the saved plan, and preserve existing trips. Simulate delivery by opening the link in each guest session. Student inspection is pending.
+
+#### Headed demo reload correction
+
+The student reported that the headed invitation demo opened Chromium and repeatedly refreshed without completing. Reproduce the navigation loop on the local development server and verify that the guided run reaches its saved plan. Student inspection is pending.
+
+Chromium reproduced repeated main-frame navigations even without request interception. The Next development socket sent `reloadPage` with `HMR hash mismatch`. Closing the socket stabilized the form but the full headed submission still stalled. The Webpack development probe failed on a browser import of `node:crypto`. The demo documentation now starts a production build on the existing database, and the script reports its stages, checks the landing response, and brings the organizer tab forward.
+
+The production build passed, and the headed demo ran on port 3000. It registered both drivers and all three passengers, saved and reloaded the plan with two matches and one unassigned rider, and displayed the Enter-to-close prompt. Lint and whitespace checks passed. The script is blob `df1b8ab4ec3c`. The Next development problem is tracked separately as ISSUE-093.
+
+#### Fictional address invitation demo
+
+The student requested an address-mode walkthrough with fictional places. Change venue and guest registration to use the fixture picker, verify the provider before issuing any address search, and check the saved detour totals after reload. Student inspection is pending.
+
+The demo now uses the fixture Event Hall and confirms named pickup and driver addresses through the same organizer and guest pickers as a manual run. A non-cacheable health header identifies the configured address provider while preserving the existing readiness JSON. The script requires the header to indicate fixture before launching Chromium or making an address search.
+
+Lint, typecheck, the production build and the end-to-end demo passed against the local production app. The old build without the provider header was rejected before search. The updated build registered both drivers and all three passengers, saved and reloaded Brooke with Dana at 64 seconds and Alex with Eli at 18 seconds, and left Casey unassigned. Fixture attribution and the 82-second total were verified. The walkthrough used zero live provider requests.
+
+### Manual plan editing deferral
+
+The student requested an estimate for moving passengers between drivers and an Unassigned area, recalculating the pickup costs of the chosen assignments, and saving the adjusted preview. The student then asked to commit the current project and defer that feature.
+
 ## Checkpoint D pilot preparation
 
 The student asked Codex to proceed from committed C (`2b50353`). This episode covers D1 attribution on suggestions, previews and saved estimates, and preparing the Geoapify search path against fictional provider responses. Live L-19 measurements depend on the owner’s L-18 project and credit confirmation. Student inspection is pending.
