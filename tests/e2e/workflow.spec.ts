@@ -670,6 +670,7 @@ test("U-03: unavailable session storage blocks mutations before sending; reads/p
   try {
     // Create the trip via the API directly (creation also needs storage-free
     // flow); then open its page in the storage-blocked context.
+    expect((await page.request.post("/api/workspace", { data: { action: "bootstrap" } })).ok()).toBe(true);
     const created = await page.request.post("/api/trips", {
       headers: { "idempotency-key": crypto.randomUUID() },
       data: { name: "No Storage Trip", destinationLabel: "Union", departAt: "2026-03-01T09:30:00+00:00" },

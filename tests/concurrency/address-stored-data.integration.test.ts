@@ -10,7 +10,8 @@ import { createPool } from "../../src/db/pool.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
 import { addressCounters, resetAddressCounters } from "../../src/trips/address-metrics.ts";
-import { addDriver, addRequest, createTrip, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { addDriver, addRequest, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip } from "./helpers/workspace.ts";
 import {
   APP,
   SETUP,

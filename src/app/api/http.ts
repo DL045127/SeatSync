@@ -120,18 +120,18 @@ export function rejectUntrustedHost(request: Request, env: Env = process.env): R
     },
   });
   const host = request.headers.get("host");
-  if (!host) return refuse();
-  let authority: string;
-  try {
-    const url = new URL(`http://${host}`);
-    const bare = !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
-    if (!bare) return refuse();
-    authority = url.host;
-  } catch {
-    return refuse();
+  // Host is a bare authority. Match its default port under the configured
+  // scheme, even when a reverse proxy forwarded the request over HTTP.
+  if (!host || /[\s/@?#\\]/.test(host)) return refuse();
+  for (const origin of trustedOrigins(request, env)) {
+    const trusted = new URL(origin);
+    try {
+      if (new URL(`${trusted.protocol}//${host}`).host === trusted.host) return undefined;
+    } catch {
+      return refuse();
+    }
   }
-  const trusted = new Set([...trustedOrigins(request, env)].map((origin) => new URL(origin).host));
-  return trusted.has(authority) ? undefined : refuse();
+  return refuse();
 }
 
 /**
@@ -367,7 +367,7 @@ function mapError(error: unknown, requestKey: string): Response {
     });
   }
   if (error instanceof TransientFailure) {
-    return errorResponse(503, {
+    return errorResponse(error.code === "WORKSPACE_REQUIRED" || error.code === "WORKSPACE_CHANGED" ? 409 : 503, {
       error: { code: error.code, message: error.message, requestId: randomUUID() },
     }, error.retryAfterSeconds === undefined ? undefined : { "retry-after": String(error.retryAfterSeconds) });
   }

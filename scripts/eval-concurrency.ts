@@ -29,6 +29,7 @@ import { assertDataset } from "../src/db/dataset.ts";
 import { withTransaction } from "../src/db/transaction.ts";
 import { ALGORITHM_VERSION, computeMatch, projectMatchInput, type Roster } from "../src/matching/index.ts";
 import * as repo from "../src/trips/repository.ts";
+import { bootstrapWorkspace } from "../src/workspaces/service.ts";
 import { addDriver, addRequest, createTrip, editDriver, getTripSnapshot } from "../src/trips/service.ts";
 import { __setPublishBarrier, publishPreview } from "../src/trips/preview.ts";
 import { commitPreview } from "../src/trips/commit.ts";
@@ -73,9 +74,10 @@ async function readRoster(client: PoolClient, tripId: string): Promise<Roster> {
 }
 
 async function seedTrip(pool: Pool): Promise<string> {
+  const { secret } = await bootstrapWorkspace(pool);
   const t = await createTrip(pool, key(), {
     name: "D-2 Trip", destinationLabel: "Student Union", departAt: "2026-03-01T09:30:00+02:00",
-  });
+  }, secret);
   const tripId = (t.body as { id: string }).id;
   await addDriver(pool, tripId, key(), { name: "Keep", zoneId: "north", seatCapacity: 2 });
   const cancelDriver = await addDriver(pool, tripId, key(), { name: "Cancel", zoneId: "south", seatCapacity: 1 });

@@ -53,6 +53,14 @@ To open the app against your demo database, run `npm start` after building or us
 
 `npm run demo:reset` replaces all data in the designated demo database and prints its new starter trip ID. Stop the app before running it and wait for reset to finish before restarting. A startup read overlapping reset may briefly report `DATASET_MISMATCH` (ISSUE-004). `npm run test:database` replaces data only in the designated test database. Both databases are bootstrapped on first start with an empty Compose volume. For a clean rehearsal, use a fresh Compose project with port 55432 available.
 
+### Organizer workspace on the reuse branch
+
+Run `npm run db:migrate` before starting the updated app on an existing database. Open the trip creation page to establish a workspace in your browser. New trips belong to that workspace. Existing trips stay accessible through their existing URLs.
+
+Open **Organizer workspace** on the creation page to rotate and copy a recovery code. Use **Recover workspace** in another browser to attach it to the same workspace. Rotating the code invalidates the previous code. Open tabs in the same browser hide it while the rotation is pending. If the response is lost, rotate again to obtain a code you can save. **Sign out other browsers** revokes their sessions. If a workspace switch interrupts either action, the page refreshes the workspace and asks you to choose the action again. Keep the recovery code private.
+
+Scripts that post to `/api/trips` should first post `{"action":"bootstrap"}` to `/api/workspace` and retain its session cookie. If creation returns `409 WORKSPACE_REQUIRED`, bootstrap again and retry with the original idempotency key and body. Pass `X-GroupRide-Workspace` with the expected workspace ID to bind an unsent draft to its original workspace. A workspace mismatch returns `409 WORKSPACE_CHANGED`, and the browser keeps the draft until you choose **Use current workspace**. To verify workspace recovery in Chromium, run `npm run test:e2e -- workspace.spec.ts` with the designated test database available.
+
 ### Share a trip invitation
 
 Run `npm run db:migrate` to add invitations to an existing local database. On the trip dashboard select **Copy invite link** and share that link with participants. Guests open it, choose **Passenger** or **Driver**, and submit their details. A driver also enters available seats and, for an address trip, a detour limit. An open, visible organizer dashboard refreshes automatically to show new registrations and departures.

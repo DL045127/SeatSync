@@ -26,10 +26,10 @@ import {
   __setSnapshotBarrier,
   addDriver,
   addRequest,
-  createTrip,
   editDriver,
   getTripSnapshot,
 } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip } from "./helpers/workspace.ts";
 import { __setCommitPlanMidHook } from "../../src/trips/repository.ts";
 import { __setPublishBarrier, publishPreview } from "../../src/trips/preview.ts";
 import { __setCommitVersionGuardEnabled, commitPreview } from "../../src/trips/commit.ts";

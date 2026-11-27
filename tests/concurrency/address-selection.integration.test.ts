@@ -12,7 +12,8 @@ import { createPool } from "../../src/db/pool.ts";
 import { __clearMasterCacheForTests, loadMaster } from "../../src/locations/master-key.ts";
 import { __setSelectionDeps, searchLocations } from "../../src/locations/selection-service.ts";
 import { TOKEN_LIFETIME_MS, assembleToken, keyIdentifier, signSegments } from "../../src/locations/selection-token.ts";
-import { addDriver, addRequest, createTrip, editDriver, getTripSnapshot, withdrawRequest } from "../../src/trips/service.ts";
+import { addDriver, addRequest, editDriver, getTripSnapshot, withdrawRequest } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip, newWorkspaceCookie } from "./helpers/workspace.ts";
 import {
   APP,
   SETUP,
@@ -510,8 +511,9 @@ describe("HTTP boundary", () => {
       expect(await count("trips", "location_mode = 'address'")).toBe(0);
 
       // The same write without either header, and with a same-host Origin, proceeds.
-      const ok = await post(tripsRoute, "http://127.0.0.1:3100/api/trips", { headers: { "idempotency-key": key() }, body: await bodyFor(token) });
-      const sameOrigin = await post(tripsRoute, "http://127.0.0.1:3100/api/trips", { headers: { "idempotency-key": key(), origin: "http://127.0.0.1:3100" }, body: await bodyFor(token) });
+      const cookie = await newWorkspaceCookie(pool);
+      const ok = await post(tripsRoute, "http://127.0.0.1:3100/api/trips", { headers: { "idempotency-key": key(), cookie }, body: await bodyFor(token) });
+      const sameOrigin = await post(tripsRoute, "http://127.0.0.1:3100/api/trips", { headers: { "idempotency-key": key(), cookie, origin: "http://127.0.0.1:3100" }, body: await bodyFor(token) });
       expect([ok.status, sameOrigin.status]).toEqual([201, 201]);
       expect(await receipts()).toBe(before + 2);
 

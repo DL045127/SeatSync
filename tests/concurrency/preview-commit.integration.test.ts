@@ -12,7 +12,8 @@ import type { Pool } from "pg";
 import { createPool } from "../../src/db/pool.ts";
 import { appRole, assertLocalTarget, setupRole, testDatabase } from "../../src/db/local-target.ts";
 import { runSetup } from "../../src/db/setup.ts";
-import { addDriver, addRequest, createTrip, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { addDriver, addRequest, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip } from "./helpers/workspace.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 

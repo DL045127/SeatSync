@@ -21,6 +21,9 @@ export type ErrorCode =
   | "PREVIEW_BUSY"
   | "ROUTING_QUOTA"
   | "ROUTING_UNAVAILABLE"
+  | "RECOVERY_VERSION_CHANGED"
+  | "WORKSPACE_CHANGED"
+  | "WORKSPACE_REQUIRED"
   | "CROSS_SITE_REQUEST"
   | "INTERNAL_ERROR";
 
@@ -89,6 +92,8 @@ export class StoredDataError extends Error {
 export class TransientFailure extends Error {
   readonly code: Extract<
     ErrorCode,
+    | "WORKSPACE_CHANGED"
+    | "WORKSPACE_REQUIRED"
     | "DATABASE_BUSY"
     | "DATABASE_UNAVAILABLE"
     | "SELECTION_KEY_UNAVAILABLE"

@@ -1,4 +1,4 @@
--- Test-only: undo migrations 002 through 005 so the upgrade test can re-apply the
+-- Test-only: undo migrations 002 through 007 so the upgrade test can re-apply the
 -- migrations over retained W6-shaped rows.
 -- Never run by the application.
 ALTER TABLE match_previews
@@ -30,7 +30,10 @@ ALTER TABLE trips
   DROP CONSTRAINT trip_mode_venue,
   DROP COLUMN venue_location,
   DROP COLUMN location_mode,
-  DROP COLUMN invite_id;
+  DROP COLUMN invite_id,
+  DROP COLUMN workspace_id;
+
+DROP TABLE travel_times, saved_places, place_passes, workspace_sessions, workspaces;
 
 DROP TABLE dataset_generation;
-DELETE FROM schema_migrations WHERE name IN ('002_address_trips.sql', '003_address_driver_limit.sql', '004_trip_invites.sql', '005_guest_leave.sql');
+DELETE FROM schema_migrations WHERE name IN ('002_address_trips.sql', '003_address_driver_limit.sql', '004_trip_invites.sql', '005_guest_leave.sql', '006_reuse.sql', '007_workspace_recovery_version.sql');

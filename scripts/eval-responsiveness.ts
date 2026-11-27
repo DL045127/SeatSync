@@ -39,6 +39,7 @@ import { loadEnvFile } from "node:process";
 import { createPool } from "../src/db/pool.ts";
 import { appRole, assertLocalTarget, setupRole, testDatabase } from "../src/db/local-target.ts";
 import { runSetup } from "../src/db/setup.ts";
+import { bootstrapWorkspace } from "../src/workspaces/service.ts";
 import { addDriver, addRequest, createTrip } from "../src/trips/service.ts";
 
 if (existsSync(".env")) loadEnvFile();
@@ -104,7 +105,8 @@ async function seed(): Promise<{ previewTrip: string; competeTrip: string; toggl
   try {
     const zones = ["north", "south", "east", "west"];
     const mk = async (name: string, dest: string) => {
-      const t = await createTrip(pool, key(), { name, destinationLabel: dest, departAt: "2026-03-01T09:30:00+02:00" });
+      const { secret } = await bootstrapWorkspace(pool);
+      const t = await createTrip(pool, key(), { name, destinationLabel: dest, departAt: "2026-03-01T09:30:00+02:00" }, secret);
       return (t.body as { id: string }).id;
     };
     const passengerTarget = control === "roster" ? 5 : 50;

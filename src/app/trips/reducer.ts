@@ -10,6 +10,7 @@ export interface PendingOperation {
   canonicalRoute: string;
   normalizedBody: unknown;
   tripId: string | null;
+  expectedWorkspaceId?: string;
 }
 
 export interface TripSnapshotView {

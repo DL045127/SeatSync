@@ -1,3 +1,4 @@
+import { bootstrapWorkspace, workspaceCookie } from "../../src/workspaces/service.ts";
 // L-01 (dataset generation, reset outcomes, key lifecycle) and L-02 (upgrade of
 // a W6 database) against real PostgreSQL. Each reset runs with NO app session
 // connected, so every pool is closed first.
@@ -7,13 +8,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { Pool, PoolClient } from "pg";
 import { normalizeCreateTrip, requestFingerprint } from "../../src/contracts/index.ts";
-import { createPool } from "../../src/db/pool.ts";
+import { __resetAppPoolForTests, createPool } from "../../src/db/pool.ts";
 import { runSetup } from "../../src/db/setup.ts";
 import { testDatabase } from "../../src/db/local-target.ts";
 import { __setTransactionCommitFaultHook } from "../../src/db/transaction.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
-import { addDriver, addRequest, createTrip, getTripSnapshot } from "../../src/trips/service.ts";
+import { addDriver, addRequest, createTrip as createTripWithoutWorkspace, getTripSnapshot } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip } from "./helpers/workspace.ts";
 import {
   APP,
   SETUP,
@@ -304,15 +306,16 @@ describe("L-02 upgrade of a W6 database", () => {
     expect((staleCommit.body as { error: { code: string } }).error.code).toBe("STALE_VERSION");
   });
 
-  test("a fresh install on an EMPTY database applies migrations 001 through 005, seeds the zones and creates one generation", async () => {
+  test("a fresh install on an EMPTY database applies migrations 001 through 007, seeds the zones and creates one generation", async () => {
     const empty = await quiesce();
     // Return the disposable test database to its pre-migration, empty state.
     await empty.query(`DROP TABLE assignments, match_previews, drivers, ride_requests, trips, mutation_receipts,
-      zone_costs, zones, dataset_generation, schema_migrations CASCADE`);
+      zone_costs, zones, dataset_generation, schema_migrations,
+      workspaces, workspace_sessions, travel_times, saved_places, place_passes CASCADE`);
     expect((await empty.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public'")).rowCount).toBe(0);
     await runSetup(SETUP, testDatabase, "migrate"); // the same command the README tells a new installer to run
     const applied = (await empty.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name")).rows.map((r) => r.name);
-    expect(applied).toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql"]);
+    expect(applied).toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql", "006_reuse.sql", "007_workspace_recovery_version.sql"]);
     expect((await empty.query("SELECT count(*)::int AS n FROM zones")).rows[0].n).toBe(4);
     expect((await empty.query("SELECT count(*)::int AS n FROM dataset_generation")).rows[0].n).toBe(1);
     // Reapplying is safe and keeps the generation.
@@ -401,7 +404,7 @@ describe("L-02 upgrade of a W6 database", () => {
       await reader.query("DELETE FROM drivers WHERE max_detour_minutes IS NULL");
       await runSetup(SETUP, testDatabase, "migrate");
       expect((await reader.query("SELECT name FROM schema_migrations ORDER BY name")).rows.map((r) => r.name))
-        .toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql"]);
+        .toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql", "006_reuse.sql", "007_workspace_recovery_version.sql"]);
       expect((await reader.query("SELECT count(*)::int AS n FROM drivers")).rows[0].n).toBe(1); // the valid driver survived
       const p = await reopen();
       await expect(insertDriverVia(p, tripId, snapshot)).rejects.toMatchObject({ code: "23514" });
@@ -432,4 +435,165 @@ describe("L-02 upgrade of a W6 database", () => {
     expect((await p.query("SELECT count(*)::int AS n FROM dataset_generation")).rows[0].n).toBe(1);
     expect(await generationOf(p)).not.toBe(g1);
   });
+});
+
+test("migration 006 preserves pre-workspace address plans, open previews and receipts", async () => {
+  const p = pool!;
+  const savedTrip = await createAddressTrip(p);
+  const venue = await tokenFor(p, "Event Hall", "venue");
+  const creationKey = key();
+  const createBody = body(venue);
+  const remaining = await createTrip(p, creationKey, createBody);
+  const openTrip = (remaining.body as { id: string }).id;
+  for (const id of [savedTrip, openTrip]) {
+    const driver = await addDriver(p, id, key(), {
+      name: "Dana", seatCapacity: 1, maxDetourMinutes: 15,
+      startSelectionToken: await tokenFor(p, "Driver Start Delta", "driver_start", id),
+    });
+    expect(driver.httpStatus).toBe(201);
+    expect((await addRequest(p, id, key(), {
+      name: "Alex", pickupSelectionToken: await tokenFor(p, "Pickup Alpha", "pickup", id),
+    })).httpStatus).toBe(201);
+  }
+  const saved = await publishPreview(p, savedTrip);
+  expect((await commitPreview(p, savedTrip, key(), { previewId: saved.body.previewId })).httpStatus).toBe(200);
+  const pending = await publishPreview(p, openTrip);
+  const savedBefore = await getTripSnapshot(p, savedTrip);
+  const admin = await quiesce();
+  const generation = await generationOf(admin);
+  const receipts = await admin.query("SELECT * FROM mutation_receipts ORDER BY request_key");
+  const previews = await admin.query("SELECT * FROM match_previews ORDER BY id");
+  await admin.query(`
+    ALTER TABLE trips DROP COLUMN workspace_id;
+    DROP TABLE travel_times, saved_places, place_passes, workspace_sessions, workspaces;
+    DELETE FROM schema_migrations WHERE name IN ('006_reuse.sql', '007_workspace_recovery_version.sql');
+  `);
+  await runSetup(SETUP, testDatabase, "migrate");
+  expect(await generationOf(admin)).toBe(generation);
+  expect((await admin.query("SELECT * FROM mutation_receipts ORDER BY request_key")).rows).toEqual(receipts.rows);
+  expect((await admin.query("SELECT * FROM match_previews ORDER BY id")).rows).toEqual(previews.rows);
+  expect((await admin.query("SELECT workspace_id FROM trips WHERE id = ANY($1::uuid[])", [[savedTrip, openTrip]])).rows)
+    .toEqual([{ workspace_id: null }, { workspace_id: null }]);
+  const reopened = await reopen();
+  expect(await getTripSnapshot(reopened, savedTrip)).toEqual(savedBefore);
+  const replay = await createTripWithoutWorkspace(reopened, creationKey, createBody, undefined);
+  expect(replay).toMatchObject({ replayed: true, body: remaining.body });
+  expect((await commitPreview(reopened, openTrip, key(), { previewId: pending.body.previewId })).httpStatus).toBe(200);
+});
+
+test("trip ownership is written with its receipt and reset invalidates the session", async () => {
+  const p = pool!;
+  const first = await bootstrapWorkspace(p);
+  const second = await bootstrapWorkspace(p);
+  const k = key();
+  const createBody = { name: "Workspace owner", destinationLabel: "Union", departAt: "2027-05-01T12:00Z" };
+  await expect(createTripWithoutWorkspace(p, k, createBody, undefined)).rejects.toMatchObject({ code: "WORKSPACE_REQUIRED" });
+  await expect(createTripWithoutWorkspace(p, k, createBody, second.secret, first.id)).rejects
+    .toMatchObject({ code: "WORKSPACE_CHANGED" });
+  expect((await p.query("SELECT 1 FROM mutation_receipts WHERE request_key = $1", [k])).rowCount).toBe(0);
+  expect((await p.query("SELECT 1 FROM trips WHERE name = $1", [createBody.name])).rowCount).toBe(0);
+  const created = await createTripWithoutWorkspace(p, k, createBody, first.secret, first.id);
+  const replay = await createTripWithoutWorkspace(p, k, createBody, second.secret, first.id);
+  expect(replay).toMatchObject({ replayed: true, body: created.body });
+  const id = (created.body as { id: string }).id;
+  const draftKey = key();
+  await expect(createTripWithoutWorkspace(p, draftKey, createBody, second.secret, first.id)).rejects
+    .toMatchObject({ code: "WORKSPACE_CHANGED" });
+  const confirmed = await createTripWithoutWorkspace(p, draftKey, createBody, second.secret, second.id);
+  expect(confirmed.httpStatus).toBe(201);
+  const confirmedId = (confirmed.body as { id: string }).id;
+  const admin = await quiesce();
+  expect((await admin.query("SELECT workspace_id FROM trips WHERE id = $1", [id])).rows)
+    .toEqual([{ workspace_id: first.id }]);
+  expect((await admin.query("SELECT workspace_id FROM trips WHERE id = $1", [confirmedId])).rows)
+    .toEqual([{ workspace_id: second.id }]);
+  const generation = await generationOf(admin);
+  await runSetup(SETUP, testDatabase, "reset");
+  expect(await generationOf(admin)).not.toBe(generation);
+  expect((await admin.query("SELECT * FROM workspace_sessions")).rowCount).toBe(0);
+  expect((await admin.query("SELECT * FROM workspaces")).rowCount).toBe(0);
+  expect((await admin.query("SELECT * FROM trips WHERE id = $1", [id])).rowCount).toBe(0);
+  const reopened = await reopen();
+  await expect(createTripWithoutWorkspace(reopened, k, createBody, first.secret)).rejects
+    .toMatchObject({ code: "WORKSPACE_REQUIRED" });
+});
+
+test("HTTPS workspace bootstrap accepts explicit port 443 and returns retryable contention", async () => {
+  const { POST } = await import("../../src/app/api/workspace/route.ts");
+  const previousOrigins = process.env.GROUPRIDE_TRUSTED_ORIGINS;
+  process.env.GROUPRIDE_TRUSTED_ORIGINS = "https://rides.example";
+  const bootstrap = (host: string, cookie?: string) => POST(new Request("http://127.0.0.1/api/workspace", {
+    method: "POST",
+    headers: {
+      host, origin: "https://rides.example", "content-type": "application/json",
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify({ action: "bootstrap" }),
+  }));
+  try {
+    expect((await bootstrap("rides.example:80")).status).toBe(403);
+    const response = await bootstrap("rides.example:443");
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.get("set-cookie");
+    expect(setCookie).toContain("; Secure");
+    const cookie = setCookie!.split(";")[0];
+    expect(cookie.startsWith(workspaceCookie + "=")).toBe(true);
+    const { workspaceId } = await response.json();
+    const locker = await pool!.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [workspaceId]);
+      const blocked = await bootstrap("rides.example:443", cookie);
+      expect(blocked.status).toBe(503);
+      expect(await blocked.json()).toMatchObject({ error: { code: "DATABASE_BUSY" } });
+    } finally {
+      await locker.query("ROLLBACK");
+      locker.release();
+    }
+    const retried = await bootstrap("rides.example", cookie);
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toEqual({ workspaceId });
+  } finally {
+    if (previousOrigins === undefined) delete process.env.GROUPRIDE_TRUSTED_ORIGINS;
+    else process.env.GROUPRIDE_TRUSTED_ORIGINS = previousOrigins;
+    await __resetAppPoolForTests();
+  }
+});
+
+test("rotation validates the PostgreSQL version range and preserves the same-version winner", async () => {
+  const { POST } = await import("../../src/app/api/workspace/route.ts");
+  const workspace = await bootstrapWorkspace(pool!);
+  const post = (data: unknown, cookie?: string) => POST(new Request("http://127.0.0.1/api/workspace", {
+    method: "POST",
+    headers: {
+      host: "127.0.0.1", "content-type": "application/json",
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify(data),
+  }));
+  const rotate = (expectedRecoveryVersion: number) => post({
+    action: "rotate", expectedWorkspaceId: workspace.id, expectedRecoveryVersion,
+  }, `${workspaceCookie}=${workspace.secret}`);
+  try {
+    for (const version of [-1, 2_147_483_648]) {
+      const invalid = await rotate(version);
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({ error: { code: "INVALID_INPUT" } });
+    }
+    const max = await rotate(2_147_483_647);
+    expect(max.status).toBe(409);
+    expect(await max.json()).toMatchObject({ error: { code: "RECOVERY_VERSION_CHANGED", currentVersion: 0 } });
+
+    const responses = await Promise.all([rotate(0), rotate(0)]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    const success = await responses.find(response => response.ok)!.json();
+    expect(success).toMatchObject({ workspaceId: workspace.id, recoveryVersion: 1 });
+    const stale = await responses.find(response => !response.ok)!.json();
+    expect(stale).toMatchObject({ error: { code: "RECOVERY_VERSION_CHANGED", currentVersion: 1 } });
+    const recovered = await post({ action: "recover", code: success.recoveryCode });
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toEqual({ workspaceId: workspace.id });
+  } finally {
+    await __resetAppPoolForTests();
+  }
 });

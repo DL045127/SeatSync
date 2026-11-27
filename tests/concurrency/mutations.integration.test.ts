@@ -24,11 +24,11 @@ import { OutcomeUnknown, TerminalBusinessError, TransientFailure } from "../../s
 import {
   addDriver,
   addRequest,
-  createTrip,
   editDriver,
   getTripSnapshot,
   withdrawRequest,
 } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip, newWorkspaceCookie } from "./helpers/workspace.ts";
 
 if (existsSync(".env")) loadEnvFile();
 const setupUrl = process.env.TEST_SETUP_DATABASE_URL;
@@ -728,9 +728,10 @@ describe("C-17/C-09 through the HTTP route handlers", () => {
 
     try {
       const k = randomUUID();
+      const cookie = await newWorkspaceCookie(pool!);
       const createReq = new Request("http://127.0.0.1/api/trips", {
         method: "POST",
-        headers: { "content-type": "application/json", "idempotency-key": k },
+        headers: { "content-type": "application/json", "idempotency-key": k, cookie },
         body: JSON.stringify({ name: "HTTP Trip", destinationLabel: "Union", departAt: "2026-07-01T08:00:00+00:00" }),
       });
       const created = await tripsRoute.POST(createReq);
@@ -808,10 +809,11 @@ describe("C-17/C-09 through the HTTP route handlers", () => {
 
     try {
       // Create a trip to read back.
+      const cookie = await newWorkspaceCookie(pool!);
       const created = await tripsRoute.POST(
         new Request("http://127.0.0.1/api/trips", {
           method: "POST",
-          headers: { "content-type": "application/json", "idempotency-key": randomUUID() },
+          headers: { "content-type": "application/json", "idempotency-key": randomUUID(), cookie },
           body: JSON.stringify({ name: "ReadMe", destinationLabel: "Union", departAt: "2026-08-01T08:00:00+00:00" }),
         }),
       );

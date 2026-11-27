@@ -13,6 +13,14 @@ const postTrip = (page: Page) =>
   page.evaluate(async () => {
     // crypto.randomUUID needs a secure context, which a rebound http origin is not.
     const uuid = "xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx".replace(/x/g, () => Math.floor(Math.random() * 16).toString(16));
+    if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
+      const workspace = await fetch("/api/workspace", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "bootstrap" }),
+      });
+      if (!workspace.ok) throw new Error("Workspace bootstrap failed.");
+    }
     const res = await fetch("/api/trips", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": uuid },

@@ -12,7 +12,8 @@ import { __clearMasterCacheForTests } from "../../../src/locations/master-key.ts
 import { searchLocations } from "../../../src/locations/selection-service.ts";
 import { appRole, assertLocalTarget, setupRole, testDatabase } from "../../../src/db/local-target.ts";
 import { runSetup } from "../../../src/db/setup.ts";
-import { addDriver, addRequest, createTrip } from "../../../src/trips/service.ts";
+import { addDriver, addRequest } from "../../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip } from "./workspace.ts";
 
 if (existsSync(".env")) loadEnvFile();
 const setupUrl = process.env.TEST_SETUP_DATABASE_URL;

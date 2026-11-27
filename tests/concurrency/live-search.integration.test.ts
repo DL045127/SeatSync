@@ -10,7 +10,8 @@ import { appPool, createPool, __resetAppPoolForTests } from "../../src/db/pool.t
 import { POST as searchRoute } from "../../src/app/api/locations/search/route.ts";
 import { defaultSelectionDeps, searchLocations } from "../../src/locations/selection-service.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
-import { addDriver, addRequest, createTrip, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { addDriver, addRequest, editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { createTripWithWorkspace as createTrip } from "./helpers/workspace.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 import { APP, key, resetTestDatabase, useFixtureEnvironment } from "./helpers/address.ts";
 

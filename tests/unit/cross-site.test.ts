@@ -5,7 +5,7 @@
 // carry neither header (the evaluation scripts and integration suites use Node
 // fetch) are allowed.
 
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { rejectCrossSite, rejectUntrustedHost } from "../../src/app/api/http.ts";
 
 const request = (headers: Record<string, string>) =>
@@ -153,9 +153,13 @@ describe("rejectUntrustedHost validates the destination (ISSUE-060)", () => {
     refusedHost("evil.example:3100", env);
   });
 
-  test("with an explicit list, the Host must be one of the listed authorities (scheme-independent)", () => {
+  test("with an explicit list, the Host must match a listed authority under its configured scheme", () => {
     const env = { GROUPRIDE_TRUSTED_ORIGINS: "https://app.example, http://other.example:8080" };
     allowed("app.example", env);
+    allowed("app.example:443", env);
+    refusedHost("app.example:80", env);
+    refusedHost("app.example:443/", env);
+    refusedHost("app.example:443@other.example", env);
     allowed("other.example:8080", env);
     refusedHost("app.example:8443", env);
     refusedHost("127.0.0.1:3100", env);
@@ -219,6 +223,18 @@ describe("the telemetry endpoint applies the same guard before any side effect",
     expect((await route.GET(new Request("http://127.0.0.1:3100/api/eval/telemetry"))).status).toBe(403);
     const drained = JSON.stringify(await (await route.GET(get(""))).json()); // the legitimate harness
     expect(drained).toContain("7.25"); // the record survived every refused request
+  });
+
+  test("configured HTTPS telemetry accepts both default-port spellings", async () => {
+    vi.stubEnv("GROUPRIDE_TRUSTED_ORIGINS", "https://app.example");
+    try {
+      const route = await import("../../src/app/api/eval/telemetry/route.ts");
+      expect((await route.GET(get("", { host: "app.example" }))).status).toBe(200);
+      expect((await route.GET(get("", { host: "app.example:443" }))).status).toBe(200);
+      expect((await route.GET(get("", { host: "app.example:80" }))).status).toBe(403);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("outside the test database the endpoint stays inert (404) for everyone", async () => {

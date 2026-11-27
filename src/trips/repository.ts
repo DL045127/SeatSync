@@ -95,12 +95,13 @@ export async function insertTrip(
     departAt: string;
     /** Set for an address trip: the immutable venue snapshot. */
     venueLocation?: unknown;
+    workspaceId: string;
   },
 ): Promise<TripRow> {
   const address = trip.venueLocation !== undefined;
   const result = await client.query<TripRow>(
-    `INSERT INTO trips (name, destination_label, depart_at, location_mode, venue_location)
-     VALUES ($1, $2, $3, $4, $5::jsonb)
+    `INSERT INTO trips (name, destination_label, depart_at, location_mode, venue_location, workspace_id)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6)
      RETURNING ${TRIP_COLUMNS}`,
     [
       trip.name,
@@ -108,6 +109,7 @@ export async function insertTrip(
       trip.departAt,
       address ? "address" : "zone",
       address ? JSON.stringify(trip.venueLocation) : null,
+      trip.workspaceId,
     ],
   );
   return result.rows[0];

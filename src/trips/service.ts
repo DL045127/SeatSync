@@ -3,9 +3,10 @@
 // the shared keyed-mutation helper. Roster changes follow whole-plan
 // invalidation (docs/ARCHITECTURE.md sections 4 and 6).
 
+import { requireWorkspace } from "../workspaces/service.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { StoredDataError, TerminalBusinessError } from "../contracts/errors.ts";
+import { StoredDataError, TerminalBusinessError, TransientFailure } from "../contracts/errors.ts";
 import {
   LIMITS,
   isAddressAddDriver,
@@ -238,6 +239,8 @@ export function createTrip(
   pool: Pool,
   requestKey: string,
   rawBody: unknown,
+  workspaceSession: string | undefined,
+  expectedWorkspaceId?: string,
 ): Promise<MutationResponse> {
   const body = normalizeCreateTrip(rawBody);
   const key = normalizeUuid(requestKey);
@@ -253,9 +256,13 @@ export function createTrip(
       // The address form verifies its venue token here, inside keyed work, so a
       // matching receipt has already replayed before any signature, expiry or
       // provider check (docs/ARCHITECTURE-v2.md section 3).
+      const workspaceId = await requireWorkspace(client, workspaceSession);
+      if (expectedWorkspaceId !== undefined && expectedWorkspaceId !== workspaceId) {
+        throw new TransientFailure("WORKSPACE_CHANGED", "The workspace changed. Confirm where to create this trip.");
+      }
       const trip = isAddressCreateTrip(body)
-        ? await createAddressTrip(client, body)
-        : await repo.insertTrip(client, body);
+        ? await createAddressTrip(client, body, workspaceId)
+        : await repo.insertTrip(client, { ...body, workspaceId });
       return {
         httpStatus: 201,
         body: {
@@ -571,6 +578,7 @@ export function clearPlan(pool: Pool, tripIdRaw: string, requestKey: string, raw
 async function createAddressTrip(
   client: PoolClient,
   body: { name: string; departAt: string; venueSelectionToken: string },
+  workspaceId: string,
 ): Promise<repo.TripRow> {
   const venue = await verifyAttachment(client, body.venueSelectionToken, { purpose: "venue", tripId: null });
   return repo.insertTrip(client, {
@@ -579,6 +587,7 @@ async function createAddressTrip(
     destinationLabel: venue.label,
     departAt: body.departAt,
     venueLocation: venue,
+    workspaceId,
   });
 }
 

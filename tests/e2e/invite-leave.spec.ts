@@ -11,6 +11,7 @@ async function join(page: Page, invite: URL, name: string, role: "driver" | "pas
 }
 
 test("a late registration reply remains recoverable from the shared invite", async ({ page }) => {
+  expect((await page.request.post("/api/workspace", { data: { action: "bootstrap" } })).ok()).toBe(true);
   const created = await page.request.post("/api/trips", {
     headers: { "idempotency-key": crypto.randomUUID() },
     data: { name: "Recover a private link", destinationLabel: "Union", departAt: "2027-04-10T09:30Z" },
@@ -75,6 +76,7 @@ test("a late registration reply remains recoverable from the shared invite", asy
 });
 
 test("private registration status and leave recovery stay scoped while the organizer updates", async ({ page, browser }) => {
+  expect((await page.request.post("/api/workspace", { data: { action: "bootstrap" } })).ok()).toBe(true);
   const created = await page.request.post("/api/trips", {
     headers: { "idempotency-key": crypto.randomUUID() },
     data: { name: "Guest leave", destinationLabel: "Union", departAt: "2027-04-10T09:30Z" },
@@ -182,6 +184,7 @@ test("private registration status and leave recovery stay scoped while the organ
 });
 
 test("the organizer keeps an edit draft through guest departure and a stale save", async ({ page, browser }) => {
+  expect((await page.request.post("/api/workspace", { data: { action: "bootstrap" } })).ok()).toBe(true);
   const created = await page.request.post("/api/trips", {
     headers: { "idempotency-key": crypto.randomUUID() },
     data: { name: "Edit while guests leave", destinationLabel: "Union", departAt: "2027-04-10T09:30Z" },
@@ -252,6 +255,7 @@ test("the organizer keeps an edit draft through guest departure and a stale save
 });
 
 test("an older successful registration replay shows completion without a private link", async ({ page }) => {
+  expect((await page.request.post("/api/workspace", { data: { action: "bootstrap" } })).ok()).toBe(true);
   const created = await page.request.post("/api/trips", {
     headers: { "idempotency-key": crypto.randomUUID() },
     data: { name: "Older guest receipt", destinationLabel: "Union", departAt: "2027-04-10T09:30Z" },
