@@ -15,8 +15,8 @@ import { classifyUnkeyedFailure } from "../db/classify.ts";
 import { assertDataset } from "../db/dataset.ts";
 import { datasetLock } from "../db/local-target.ts";
 import { PreviewDeadline } from "../db/deadline.ts";
-import { acquireRouting, observeVersion, retainForPublication, stale } from "./routing-permit.ts";
-import { identicalCoordinates, legKey, requiredPairs, retentionPairs } from "../matching/address.ts";
+import { acquireRouting, notifyPublished, observeVersion, retainForLookup, retainForPublication, stale } from "./routing-permit.ts";
+import { legKey, requiredPairs, retentionPairs } from "../matching/address.ts";
 import { withTransaction } from "../db/transaction.ts";
 import { addressProvider } from "../locations/config.ts";
 import {
@@ -26,11 +26,12 @@ import {
   computeMatch,
   projectMatchInput,
 } from "../matching/index.ts";
-import type { AddressRoster } from "../matching/address.ts";
+import type { AddressPoint, AddressRoster } from "../matching/address.ts";
 import type { ProviderName } from "../locations/snapshot.ts";
 import type { Leg } from "../matching/address.ts";
 import { AddressEvidenceError } from "../matching/address.ts";
 import {
+  canShareTravelTimes,
   RoutingResultError,
   RoutingUnavailable,
   routingAdapterFor,
@@ -47,6 +48,11 @@ import { toAddressRoster, tripProvider } from "./address-roster.ts";
 import { assertResultMatchesRoster, pickResult, type RosterFacts } from "./preview-integrity.ts";
 import { computeAddressPreview, type AddressPreviewComputation } from "./address-preview.ts";
 import * as repo from "./repository.ts";
+import { hasWorkspaceSession } from "../workspaces/service.ts";
+import {
+  missingTravelPairs, persistTravelBatch, readDatasetGeneration, readTravelTimes,
+  reuseTripCoordinates, travelTimeMaxAgeDays, travelTimeWriteBudgetMs, type TravelTimeWriteScope,
+} from "./travel-times.ts";
 
 /**
  * The preview identifier a trip's mode expects. Zone trips keep the solver
@@ -246,24 +252,30 @@ async function readReuseCandidate(
   version: number,
   roster: AddressRoster,
   policyId: string,
-): Promise<Map<string, Leg> | null | undefined> {
+  locationHistorySince: ReadonlyMap<string, number>,
+): Promise<{ legs: Map<string, Leg> | null; historicalPoints: AddressPoint[] }> {
   const row = await repo.findReuseCandidate(client, tripId, policyId, version);
-  if (!row) return undefined;
+  const history = await repo.listReplacedLocations(client, tripId, row?.baseVersion ?? 0);
+  const historicalPoints = history.map(record => record.location);
+  if (!row) return { legs: new Map(), historicalPoints };
   // A GENUINE legacy row is simply not a candidate: not a failure, and not a reason to reach for
   // an older row. "Genuine" means the known legacy schema AND that release's own algorithm
   // revision together; a self-declared tag alone proves nothing, so a typo, an unknown future
   // revision, or an old label on a current row is corruption and is counted.
   const schema = (row.evidence as { schema?: unknown } | null)?.schema;
   const legacy = typeof schema === "string" ? LEGACY_ALGORITHMS.get(schema)?.(policyId) : undefined;
-  if (legacy !== undefined && row.algorithmVersion === legacy) return undefined;
+  if (legacy !== undefined && row.algorithmVersion === legacy) return { legs: new Map(), historicalPoints };
   try {
-    return validateCandidate(row.evidence, roster, policyId);
+    const legs = validateCandidate(row.evidence, roster, policyId, {
+      baseVersion: row.baseVersion, since: locationHistorySince, replacements: history,
+    });
+    return { legs, historicalPoints };
   } catch (error) {
     if (!(error instanceof AddressEvidenceError)) throw error;
     addressCounters.reuseCandidateDiscarded += 1;
     // Counts and the preview ID only: never an address, coordinate or name.
     console.error(`Discarded a corrupt routing-evidence candidate (preview ${row.id}); rebuilding every leg.`);
-    return null; // corrupt evidence requires a cold rebuild, including skipping in-flight handoff
+    return { legs: null, historicalPoints: [] }; // corrupt evidence requires a cold rebuild
   }
 }
 
@@ -276,9 +288,10 @@ export async function publishPreview(
   pool: Pool,
   tripIdRaw: string,
   deadline = new PreviewDeadline(),
+  workspaceSecret?: string,
 ): Promise<PreviewResponse> {
   try {
-    return await deadline.wait(publishPreviewInner(pool, tripIdRaw, deadline));
+    return await deadline.wait(publishPreviewInner(pool, tripIdRaw, deadline, workspaceSecret));
   } catch (error) {
     throw classifyUnkeyedFailure(error);
   }
@@ -288,8 +301,10 @@ async function publishPreviewInner(
   pool: Pool,
   tripIdRaw: string,
   deadline: PreviewDeadline,
+  workspaceSecret?: string,
 ): Promise<PreviewResponse> {
   const tripId = normalizeUuid(tripIdRaw);
+  let releaseLookup: (() => void) | undefined;
 
   // Step 1: consistent read snapshot at version v; reuse an existing preview.
   const snapshot = await withTransaction(pool, "read", async (client) => {
@@ -298,55 +313,87 @@ async function publishPreviewInner(
     const trip = await repo.readTrip(client, tripId);
     if (!trip) throw new TerminalBusinessError(404, "NOT_FOUND", "Trip not found.");
     const algorithm = expectedAlgorithm(trip);
+    const provider = trip.location_mode === "address" ? tripProvider(trip) : undefined;
+    const livePolicy = provider === "geoapify" ? routingPolicyFor(provider) : undefined;
+    if (livePolicy) {
+      deadline.remaining();
+      releaseLookup = retainForLookup(tripId, trip.version, livePolicy);
+    }
     const existing = await repo.findPreviewByKey(client, tripId, trip.version, algorithm);
     let roster: Roster | undefined;
     let addressRoster: AddressRoster | undefined;
-    let provider: ReturnType<typeof tripProvider> | undefined;
     let candidate: Map<string, Leg> | null | undefined;
+    const workspaceLegs = new Map<string, Leg>();
+    let travelScope: TravelTimeWriteScope | undefined;
+    let historicalPoints: AddressPoint[] = [];
     let hit: ResponseContext | undefined;
     if (existing) {
       // A stored hit is judged against the roster at its version before it is served.
       hit = {
         facts: await repo.listParticipantFacts(client, tripId),
-        address: trip.location_mode === "address"
-          ? { provider: tripProvider(trip), policyId: routingPolicyFor(tripProvider(trip)) }
+        address: provider
+          ? { provider, policyId: routingPolicyFor(provider) }
           : undefined,
       };
     } else {
-      if (trip.location_mode === "address") {
+      if (provider) {
         const [drivers, requests] = await Promise.all([
           repo.listDrivers(client, tripId),
           repo.listRequests(client, tripId),
         ]);
         addressRoster = toAddressRoster(trip, drivers, requests);
-        provider = tripProvider(trip);
-        candidate = await readReuseCandidate(client, tripId, trip.version, addressRoster, routingPolicyFor(provider));
+        const policyId = routingPolicyFor(provider);
+        const locationHistorySince = new Map([
+          ...drivers.map(row => [`driver:${row.id}`, row.location_history_since] as const),
+          ...requests.map(row => [`passenger:${row.id}`, row.location_history_since] as const),
+        ]);
+        ({ legs: candidate, historicalPoints } = await readReuseCandidate(
+          client, tripId, trip.version, addressRoster, policyId, locationHistorySince,
+        ));
+        const required = requiredPairs(addressRoster);
+        if (candidate) reuseTripCoordinates(addressRoster, retentionPairs(addressRoster), candidate, historicalPoints);
+
+        const missing = missingTravelPairs(required, candidate ?? new Map());
+        const maxAgeDays = travelTimeMaxAgeDays();
+        if (missing.length && maxAgeDays > 0 && trip.workspace_id && workspaceSecret &&
+            canShareTravelTimes(provider) && await hasWorkspaceSession(client, trip.workspace_id, workspaceSecret)) {
+          travelScope = { workspaceId: trip.workspace_id, secret: workspaceSecret, tripId,
+            policyId, maxAgeDays, generation: await readDatasetGeneration(client) };
+          if (candidate) await readTravelTimes(client, travelScope, missing, workspaceLegs);
+        }
       } else {
         roster = await readRoster(client, tripId);
       }
     }
-    return { version: trip.version, algorithm, existing, hit, roster, addressRoster, provider, candidate };
-  }, deadline);
+    return { version: trip.version, algorithm, existing, hit, roster, addressRoster, provider, livePolicy, candidate, workspaceLegs, travelScope, historicalPoints };
+  }, deadline).catch(error => {
+    releaseLookup?.();
+    throw error;
+  });
 
-  const { addressRoster, provider, version } = snapshot;
+  const { addressRoster, version, livePolicy, travelScope } = snapshot;
   const candidate = snapshot.candidate ?? new Map<string, Leg>();
-  const livePolicy = provider === "geoapify" ? routingPolicyFor(provider) : undefined;
-  const needsLive = livePolicy !== undefined && addressRoster && requiredPairs(addressRoster).some(
-    ({ from, to }) => !identicalCoordinates(from, to) && !candidate.has(legKey(from.id, to.id)),
-  );
-  // A covered solve can publish now, even when its retention set includes
-  // dormant legs from the old holder. Only upstream work requires a permit.
-  const immediate = observeVersion(tripId, version, needsLive || snapshot.candidate === null ? undefined : livePolicy);
-  if (snapshot.existing) {
-    recordPreview({ cacheHit: true, matcherMs: null });
-    return toResponse(snapshot.existing, snapshot.hit!);
-  }
-
-  const holder = needsLive ? await acquireRouting(tripId, version, livePolicy, deadline) : undefined;
-  let releasePublication: (() => void) | undefined;
+  const needsLive = livePolicy !== undefined && addressRoster &&
+    missingTravelPairs(requiredPairs(addressRoster), candidate)
+      .some(({ from, to }) => !snapshot.workspaceLegs.has(legKey(from.id, to.id)));
+  let holder: Awaited<ReturnType<typeof acquireRouting>>;
+  let covered: ReturnType<typeof retainForPublication> | undefined;
+  const observations: Parameters<typeof persistTravelBatch>[2][number][] = [];
   try {
-    if (holder) {
-      // The first read may have preceded another holder's publication or a roster edit.
+    const immediate = observeVersion(tripId, version, needsLive || snapshot.candidate === null ? undefined : livePolicy)
+      ?? new Map<string, Leg>();
+    if (snapshot.existing) {
+      if (livePolicy) notifyPublished(tripId, version, livePolicy);
+      recordPreview({ cacheHit: true, matcherMs: null });
+      return toResponse(snapshot.existing, snapshot.hit!);
+    }
+
+    if (needsLive) holder = await acquireRouting(tripId, version, livePolicy, deadline);
+    else if (livePolicy) covered = retainForPublication(tripId, version, livePolicy, immediate);
+
+    if (covered?.routing) await covered.waitForRouting(deadline);
+    if (livePolicy && (needsLive || covered?.routing || covered?.published)) {
+      // The first snapshot may predate a peer's publication or a roster edit.
       const winner = await withTransaction(pool, "read", async (client) => {
         await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
         await assertDataset(client);
@@ -356,28 +403,40 @@ async function publishPreviewInner(
         const row = await repo.findPreviewByKey(client, tripId, version, snapshot.algorithm);
         if (row) return toResponse(row, {
           facts: await repo.listParticipantFacts(client, tripId),
-          address: { provider: "geoapify", policyId: holder.policy },
+          address: { provider: "geoapify", policyId: livePolicy },
         });
       }, deadline);
       if (winner) {
+        notifyPublished(tripId, version, livePolicy);
         recordPreview({ cacheHit: true, matcherMs: null });
         return winner;
       }
+      if (needsLive && !holder) throw new StoredDataError("A published preview disappeared before it could be read.");
+    }
+    if (covered?.routing) {
+      for (const [key, leg] of covered.routing.settled) immediate.set(key, leg);
     }
     const settled = holder?.settled ?? immediate;
-    if (settled?.size && addressRoster) {
+    if (settled.size && addressRoster) {
       if (snapshot.candidate === null) {
         settled.clear(); // a corrupt reuse candidate requires a fully cold attempt
       } else {
-        const retained = new Set(retentionPairs(addressRoster).map(({ from, to }) => legKey(from.id, to.id)));
-        for (const [key, leg] of settled) {
-          if (candidate.has(key) || !retained.has(key)) settled.delete(key);
-          else candidate.set(key, leg);
-        }
-        if (immediate?.size && livePolicy) {
-          releasePublication = retainForPublication(tripId, version, livePolicy, immediate);
+        const retainedPairs = retentionPairs(addressRoster);
+        const retained = new Set(retainedPairs.map(({ from, to }) => legKey(from.id, to.id)));
+        const merged = new Map([...settled, ...candidate]);
+        reuseTripCoordinates(addressRoster, retainedPairs, merged, snapshot.historicalPoints);
+        settled.clear();
+        for (const [key, leg] of merged) {
+          if (candidate.has(key) || !retained.has(key)) continue;
+          settled.set(key, leg);
+          candidate.set(key, leg);
         }
       }
+    }
+    // A workspace estimate fills a hole only after all trip-local legs,
+    // including a confirmed no-route carried through handoff, are merged.
+    for (const [key, leg] of snapshot.workspaceLegs) {
+      if (!candidate.has(key)) candidate.set(key, leg);
     }
     const controller = holder?.controller;
     const routingSignal = controller ? AbortSignal.any([
@@ -397,6 +456,7 @@ async function publishPreviewInner(
             provider,
             signal: routingSignal,
             settled: holder?.settled,
+            recordBatch: travelScope ? batch => { observations.push(...batch); } : undefined,
             policyId: routingPolicyFor(provider),
             // Built lazily: a rematch that needs no new observation never touches routing,
             // so it still publishes while routing is unavailable.
@@ -442,7 +502,7 @@ async function publishPreviewInner(
     controller?.signal.throwIfAborted();
 
     // Step 3-4: lock the trip, recheck the version, then publish or reuse.
-    return await withTransaction(pool, "write", async (client) => {
+    const published = await withTransaction(pool, "write", async (client) => {
       await client.query("SELECT pg_advisory_xact_lock_shared($1::int, $2::int)", [...datasetLock]);
       await assertDataset(client);
       const trip = await repo.lockTrip(client, tripId);
@@ -480,8 +540,17 @@ async function publishPreviewInner(
         address: snapshot.provider ? { provider: snapshot.provider, policyId: routingPolicyFor(snapshot.provider) } : undefined,
       });
     }, deadline);
+    if (livePolicy) notifyPublished(tripId, version, livePolicy);
+    return published;
   } finally {
-    releasePublication?.();
+    covered?.release();
     holder?.release();
+    releaseLookup?.();
+    // Optional SQL follows publication (or failure), including releasing the
+    // routing permit. Keep healthy writes visible to the next sequential
+    // request while leaving the chosen outcome enough time to be returned.
+    if (travelScope && observations.length && deadline.hasTime(travelTimeWriteBudgetMs + 300)) {
+      await persistTravelBatch(pool, travelScope, observations);
+    }
   }
 }

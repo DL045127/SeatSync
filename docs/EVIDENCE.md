@@ -567,6 +567,251 @@ All 17 targeted PostgreSQL cases passed, including the race in which two request
 
 Lint, typecheck and all 470 unit tests passed. The independent browser run covered the 12 submitted workspace workflows and the two additional probes. The 31-workflow Chromium run belongs to the implementation episode. The review used the designated PostgreSQL test database and the fixture provider with zero live provider requests. No further correctness finding arose from these changes. REUSE-1.1 passes independent technical review. REUSE-1.2 is next and student inspection remains pending.
 
+### REUSE-1.2 directed driving-time reuse
+
+The student asked to continue from committed REUSE-1.1 (`6196188`) on the experimental branch. This episode covers trip-local coordinate reuse, verified-workspace reads, fixture and loopback batch persistence, freshness, cleanup, and generation fencing. Live cross-trip Geoapify retention remains gated by ISSUE-109. Three-plan pricing and the final evidence and response formats are separate checkpoints. Student inspection is pending.
+
+The production preview route verifies the workspace cookie against the trip owner in the same snapshot as the roster. It resolves matching location IDs, exact directed coordinate pairs from the trip, and identical endpoints before looking for fresh workspace observations. The SQL lookup is scoped by workspace and routing policy and runs before routing admission. Finite fixture and test-loopback batches persist under a separate 200 ms transaction, with a captured-generation check followed by a fresh session and owner check. A null observation stays available for trip-local handoff but never persists to the workspace store. Fixture startup attempts a bounded global cleanup using a temporary pool, and batch writes clean up older rows across workspaces. The default external Geoapify adapter has no workspace-store access.
+
+- **SC-01 and SC-09 routing portions.** A second fixture trip with new location IDs and the same coordinates reused three durations with the provider switched off, then saved and reloaded a 230-second ride. Missing and foreign cookies could not use the store. A loopback trip with the same workspace used zero upstream requests and bypassed an already occupied routing permit. The default external adapter could not read those rows.
+- **SC-05.** A 31-day-old row and a future-dated row were both refreshed. The fresh third row was reused. Cleanup removed an expired row from another workspace. Setting freshness to zero blocked shared reads and writes. Another routing policy did not match.
+- **SC-06 and SC-07.** A new co-located pickup inherited the earlier trip observations while the provider was off. A null loopback cell was fetched again on the second trip and the two finite cells were reused. Under a blocked read, the route returned retryable 503 before dispatch. A blocked optional write was counted and the fixture preview still published. When a loopback preview was superseded during its second batch, the first validated batch remained in the workspace store and reached the successor’s retained evidence.
+- **SC-08 routing portion.** A delayed batch with a pre-reset generation was rejected after a real guarded reset even with a valid post-reset trip and session. The same input persisted with the new generation. Saved-place generation checks remain part of REUSE-2.
+
+On Node 24, all 301 PostgreSQL concurrency tests passed, including eight added travel-time and loopback cases. The initial focused loopback run found that two new tests seeded signed fixtures while configured in live-format mode. Seeding in fixture mode before switching to loopback resolved the harness failure. The production build and all 51 Chromium workflows passed. Lint, typecheck, matching (71), unit (470), setup (2), and whitespace checks also passed. Verification used fictional data, fixture and loopback providers, and the designated PostgreSQL test database. Zero live provider calls ran. [Fixture and database cases](../tests/concurrency/travel-times.integration.test.ts) · [Loopback cases](../tests/concurrency/geoapify.integration.test.ts)
+
+REUSE-1.2 passes its scoped technical checks. Explicit per-leg provenance, owner-only acquisition details, final integrated timings, and credit-guaranteed planning remain assigned to REUSE-1.3 and REUSE-1.4. Legacy conflicting observations remain open under ISSUE-108. Student inspection is pending. Continue at REUSE-1.3.
+
+### Independent review of REUSE-1.2
+
+Reviewed the uncommitted diff over `6196188`, including the new storage module and startup hook. The two submitted travel-time and loopback integration files passed all 57 tests on the designated PostgreSQL database. Their owner, foreign-cookie, zero-permit, expiry, no-route and reset controls passed. Seven additional cases in an isolated copy used real PostgreSQL, the fictional fixture provider and a counting loopback server.
+
+- **ISSUE-123 · A pickup at the venue can change coverage between trips.** Two identical one-driver, one-passenger rosters used distinct location IDs for the pickup and venue at the same point. The cold preview sent two identical driver-to-venue matrix requests. The stub returned 1,519.5 seconds and 519.5 seconds. The resulting 1,000-second detour exceeded the driver’s 15-minute limit, leaving the passenger unmatched. A second trip reused the stored pair, sent zero requests and matched the passenger at zero detour. Resolve each physical directed pair consistently across the pickup and venue batches, and expand its time and observation date to every logical leg. [Batch families](../src/routing/matrix.ts) · [Decoded observations](../src/routing/geoapify.ts)
+- **ISSUE-124 · Reselecting an unchanged address bypasses the workspace store.** A fixture trip published a 230-second assignment and persisted all three finite times. The organizer edited the passenger with a fresh signed selection for the same Pickup Alpha. The stored location ID changed and its coordinates stayed identical. With routing off, the owner’s preview returned 503 ROUTING_UNAVAILABLE and incremented the corrupt-candidate counter. A separate trip in the same workspace still previewed successfully using those three rows. Distinguish an endpoint legitimately replaced by an edit from damaged evidence, while retaining the cold-rebuild rule for actual corruption. [Candidate validation](../src/trips/address-evidence.ts) · [Store admission](../src/trips/preview.ts)
+- **ISSUE-125 · Two preview paths lose coordinate reuse.** In the loopback case a publisher held all three completed cells. Registering a second rider at the first rider’s coordinates superseded it. The old preview returned 409 and the winner returned 200, but the winner fetched two cells again. Four matrix requests were sent in total, where the first two covered every physical pair. In a separate fixture trip with cross-trip reuse disabled, the driver dropped to zero seats, a replacement rider registered at the same pickup and the original rider withdrew. The empty preview retained only one leg. Restoring a seat with routing off returned 503 ROUTING_UNAVAILABLE. Expand trip-local observations by directed coordinates after merging handoff data and retain eligible dormant legs that can be filled from existing observations. [Handoff merge](../src/trips/preview.ts) · [Coordinate expansion](../src/trips/travel-times.ts)
+- **ISSUE-126 · An optional write can prevent publication.** Two cold loopback probes released the final matrix reply 9.76 seconds into the normal 10-second preview budget. Both received valid data from exactly two matrix requests. The control published the 231-second assignment. With a PostgreSQL SHARE lock on travel_times blocking only the final upsert, the preview returned 503 ROUTING_UNAVAILABLE. The adapter awaits the optional write and then tests its routing signal. Keep handoff synchronous and give publication priority over optional persistence, including when little routing time remains. [Batch callback](../src/trips/address-preview.ts) · [Routing deadline check](../src/routing/geoapify.ts)
+- **ISSUE-127 · Cleanup can exceed its 1,000-row limit.** Seeded one 366-day-idle workspace with 2,500 expired travel times, then called the startup purge once. All 2,500 rows disappeared. The direct delete is limited, but deleting the workspace cascades to the remaining child rows in the same transaction. Drain dependents in bounded batches before deleting the workspace. [Cleanup loop](../src/trips/travel-times.ts) · [Foreign keys](../db/migrations/006_reuse.sql)
+
+The independent run also passed the clean-copy production build, lint, typecheck, 470 unit tests, 71 matching tests and two setup checks. The full 301 PostgreSQL and 51 Chromium results belong to the implementation run. Zero live provider requests were made. REUSE-1.2 is in correction. REUSE-1.3 pricing, REUSE-1.4 provenance and the ISSUE-109 owner decision keep their existing scopes. Student inspection remains pending.
+
+### REUSE-1.2 reuse correctness corrections
+
+The student asked to address ISSUE-123 through ISSUE-127 on the working diff over `6196188`. This episode covers one observation per directed pair, verified address revisions, coordinate expansion for settled and dormant legs, publication priority, and bounded cleanup. Student inspection is pending.
+
+| Issue | Regression result |
+|---|---|
+| ISSUE-123 | Distinct pickup and venue IDs shared coordinates. The cold preview made one matrix request and both logical legs carried the same 1,519.5-second sample and timestamp. The cold and workspace-covered trips each matched their rider at zero detour. |
+| ISSUE-124 | Reselecting the same pickup recorded the prior endpoint in migration 008's trip-local history. With routing off, the preview reused three legs and kept the 230-second assignment. Altering the historical coordinates in the candidate still triggered the corrupt-evidence path and returned 503 with routing off. |
+| ISSUE-125 | A second rider registered at the same pickup while the first preview held completed estimates. The first preview returned 409, and the newer preview published with zero further matrix requests. In a separate scenario with the workspace store disabled, a zero-seat preview retained three legs for a replacement rider at the same pickup. Restoring a seat offline produced the 230-second assignment. |
+| ISSUE-126 | A mock monotonic clock left 240 ms in the ten-second preview budget when the final validated reply arrived. Both the unlocked control and the PostgreSQL SHARE-lock case published the 231-second assignment. Both skipped the final optional upsert, while the first batch's estimate stayed in the store. |
+| ISSUE-127 | Three purge passes reduced one idle workspace from 2,500 expired travel times to 1,500, 500 and 0. The workspace survived until the final pass. |
+
+`npm run test:concurrency` passed 308 PostgreSQL tests, including the [travel-time store regressions](../tests/concurrency/travel-times.integration.test.ts) and the [counting loopback regressions](../tests/concurrency/geoapify.integration.test.ts). `npm run lint`, `npm run typecheck`, `npm run test:unit` (470), `npm run test:matching` (71) and `npm run test:setup` (2) passed on Node 24. The first focused run caught a test mistake that read Fetch's numeric `Response.status` as a function. The full run passed after correcting it.
+
+`npm run test:e2e` built the production app and passed all 51 Chromium workflows against PostgreSQL. These included address editing, workspace recovery and rotation, and guest registration and withdrawal. The main demo database was not used.
+
+Migration 008 records only edits made after it is applied. Candidates that depend on an unrecorded replaced location still rebuild cold. The deadline check uses a deterministic clock and tests behavior with a locked store. It does not measure production latency. The test runs used no live provider calls. Live cross-trip retention remains an owner decision under ISSUE-109.
+
+### Independent review of the REUSE-1.2 corrections
+
+Reviewed the working diff over `6196188` using fictional records, the designated PostgreSQL test database and a loopback matrix provider. All seven submitted regressions passed as part of an independent 81-test run across the Geoapify, travel-time and reset/upgrade suites. That includes the 240 ms final-batch checks and the 1,000 / 1,000 / 500 cleanup sequence.
+
+| Finding | Independent reproduction and control | Fix to verify |
+|---|---|---|
+| ISSUE-128 · A workspace hit overrides a trip’s confirmed no-route | Seeded a separate trip with finite times. On the target trip a caller without the workspace cookie completed both matrix calls, including a no-route to the pickup. Paused before publication, increased capacity from one seat to two and started the successor. The older request returned 409 in both runs. The successor without the cookie saved zero riders. The owner’s successor saved one rider at 231 seconds. Dashboard reload confirmed each outcome. Each successor sent zero new cells. | Keep workspace hits separate until retained trip evidence and settled handoff have been merged by ID and coordinates. Cover both a no-route and a finite workspace value for the same pair. [Preview merge](../src/trips/preview.ts) |
+| ISSUE-126 · An early optional write delays the next request | Used the standard ten-second routing and preview budgets and a 9.75-second second response on a cold two-batch preview. The control dispatched its second matrix request at 43 ms and published the 231-second plan. With a PostgreSQL SHARE lock on travel_times, the first optional upsert timed out. The second request was dispatched at 227 ms, and the preview returned 503 ROUTING_UNAVAILABLE at 9.906 seconds. Both runs dispatched two requests. | Let subsequent routing and publication proceed independently of optional storage while keeping validated cells available for handoff. Exercise the first write as well as the final one. [Batch hook](../src/trips/address-preview.ts) · [Deadline guard](../src/trips/preview.ts) |
+| ISSUE-129 · A later historical endpoint passes validation for an earlier roster | With sharing disabled, previewed Pickup Alpha, edited that rider to Bravo and then Charlie, withdrew them and added a new rider at Bravo. Deliberately damaged the Alpha preview in the test database by replacing its pickup endpoint and leg IDs with the genuine Bravo endpoint from the later edit. Left the observed times intact. The offline preview reused all three legs, recorded zero discarded candidates and saved a 230-second detour. Reload returned 230 seconds. A clean fixture trip at Bravo returned 64 seconds. | Check which endpoint the participant held at the candidate’s base version. Treat an unprovable or contradictory revision as a cold rebuild. The submitted same-pickup reselection remains valid. [History query](../src/trips/repository.ts) · [Evidence validation](../src/trips/address-evidence.ts) |
+
+The five additional probe cases ran twice in an isolated copy. The second pass included Save and reload for the handoff and damaged-evidence cases. The clean-copy production build, lint, typecheck, 470 unit tests, 71 matching tests and two setup checks also passed. The full 308 PostgreSQL and 51 Chromium results belong to the implementation run. Review used zero live provider requests. REUSE-1.2 stays in correction and ISSUE-109 continues to gate live cross-trip reuse.
+
+### REUSE-1.2 routing precedence and history follow-up
+
+The student asked Codex to fix ISSUE-126, ISSUE-128 and ISSUE-129 on the working diff over `6196188` and keep REUSE-1.2 open. This episode covers trip-local precedence over workspace hits, removing optional writes from routing and publication, and proving a candidate's endpoint at its own version. Student inspection is pending.
+
+| Issue | Change and regression result |
+|---|---|
+| ISSUE-126 | Buffered validated batches during routing. A PostgreSQL SHARE lock held from before the first request could not force an upsert timeout before dispatch of the second request. The preview published one rider at 231 seconds while the lock was still held. The deferred write timed out and left no store rows. With 240 ms remaining, the final-batch controls both published and skipped persistence entirely. |
+| ISSUE-128 | Kept workspace hits separate until the trip handoff was merged. The successor saved zero riders with no cookie, partial workspace coverage, and complete workspace coverage. Reload confirmed all three results. Each successor made zero matrix requests. |
+| ISSUE-129 | Migration 009 keeps repeated revisions of one endpoint and establishes the earliest verifiable version of each participant. A genuine Bravo point attached to the earlier Alpha preview was rejected offline. A cold rebuild fetched three cells, saved the expected 64-second detour, and reloaded it. |
+
+`npm run test:concurrency -- travel-times geoapify address-reset-upgrade` passed 86 PostgreSQL cases before adding the dedicated migration-009 upgrade check. `npm run test:concurrency` then passed all 314, including the upgrade case. It verified that a candidate predating the migration baseline fails offline and that a fresh lookup produces 64 seconds. Node 24 lint, typecheck, 470 unit tests, 71 matching tests and two setup checks passed. [Routing and persistence regressions](../tests/concurrency/geoapify.integration.test.ts) · [Endpoint revision regression](../tests/concurrency/travel-times.integration.test.ts) · [Upgrade check](../tests/concurrency/address-reset-upgrade.integration.test.ts)
+
+The deferred write can add up to its 200 ms budget to the response if enough time remains after publication. It cannot delay dispatch or publication. A preview with 500 ms or less remaining skips the write, including any earlier batches it collected. Older candidates may need a cold rebuild when their endpoint history predates the migration baseline. REUSE-1.2 remains open for independent signoff. The runs used zero live Geoapify requests.
+
+`npm run test:e2e` built the production app and passed all 51 Chromium workflows on the designated PostgreSQL test database. No demo database migration or reset ran.
+
+### Independent review of routing precedence and history
+
+Reviewed the corrected REUSE-1.2 diff over `6196188`. The Geoapify, travel-time and migration/reset suites passed all 87 submitted PostgreSQL cases. In the submitted ISSUE-128 tests the organizer changed capacity before starting the second preview. All three cross-version cases saved and reloaded zero riders.
+
+**ISSUE-128 reopened for same-version publication.** Seeded an owner workspace from a different trip with the same fictional locations. A caller without the workspace cookie then previewed the target trip. The loopback provider confirmed no route from the driver to the pickup. After both matrix responses arrived, paused that caller before publication and started an owner preview at exactly the same roster version. Both callers reached publication, and a barrier controlled which one wrote first.
+
+| Publisher allowed to write first | Both callers received | Dashboard after Save and reload |
+|---|---|---|
+| Owner with complete workspace coverage | One rider and a 231-second detour | One rider, 231 seconds |
+| Caller holding the trip’s confirmed no-route | Zero riders | Zero riders, 0 seconds |
+
+Each run made two requests to seed the workspace and two for the target trip. The owner sent zero matrix requests. Repeated both orderings with the same results. A fully covered caller bypasses routing admission, and the version check copies an active holder’s settled cells only for a strictly newer caller. The same-version caller can therefore publish an older workspace estimate for a pair the active request already resolved. Coordinate the peer with the active holder so the outcome respects trip-local observations in either ordering. [Preview admission](../src/trips/preview.ts) · [Version observation](../src/trips/routing-permit.ts)
+
+**ISSUE-126 and ISSUE-129 verified.** With the original 9.75-second second matrix response, the second request went out at 23 ms with an unlocked store and 24 ms with the SHARE lock held. Both published at 231 seconds within the ten-second budget. A separate upstream failure after one finite batch preserved the 403.25-second sample for a second trip, which needed only the remaining matrix request. The damaged historical endpoint and migration-009 tests passed. Another fixture control returned to the same Bravo selection at two different roster versions. Both offline previews reused all three legs and returned the correct 64-second detour.
+
+The independent clean-copy production build, lint, typecheck, 470 unit tests, 71 matching tests and two setup checks passed. The full 314 PostgreSQL and 51 Chromium counts come from the implementation run. The additional six probes ran in an isolated copy using the designated test database and fictional data. Zero live Geoapify requests ran. ISSUE-109 continues to gate live cross-trip reuse. Technical signoff awaits the same-version fix.
+
+### REUSE-1.2 same-version preview coordination
+
+The student asked Codex to fix the reopened ISSUE-128 on the working diff over `6196188` and keep REUSE-1.2 open. This episode covers same-version routing and workspace-covered callers that compete to publish the immutable preview. Scope includes observable Save and reload results and the existing cross-version handoff regressions. Independent review is pending.
+
+The covered caller now checks for a same-version routing holder when it registers for publication. If one exists, it waits within its own deadline and reloads the winner. If the holder exits without publishing, the covered caller merges its settled trip observations ahead of workspace hits. A routing caller that arrives after a covered publication waits before dispatching. The existing database uniqueness key and version check still decide the stored winner.
+
+| PostgreSQL and loopback case | Save and reload result |
+|---|---|
+| Routing settled no-route first. The owner was ready to publish before the routing caller could proceed. | The owner waited and both returned the same preview ID. One preview row, zero riders and no owner matrix requests. |
+| Routing settled no-route first. The routing caller was released before the owner's publication barrier. | Both returned the same preview ID. One preview row, zero riders and no owner matrix requests. |
+| The routing caller failed after settling no-route and before writing its row. | The covered caller published from the settled trip observations. One preview row, zero riders and no owner matrix requests. |
+| The covered caller was already publishing when a routing caller arrived. | Both returned the covered preview with one rider at 231 seconds. No matrix requests for the target trip, so there was no competing no-route observation. |
+
+`npm run test:concurrency -- travel-times geoapify address-reset-upgrade` passed all 91 cases, including the earlier cross-version, deferred-write and versioned-history regressions. SC-01 now directly asserts that a covered request takes no routing permit. The tests use the designated PostgreSQL database and counting loopback provider. Zero live Geoapify requests ran. [Integration tests](../tests/concurrency/geoapify.integration.test.ts) · [Admission and handoff](../src/trips/routing-permit.ts)
+
+`npm run test:concurrency` passed all 318 cases. `npm run test:e2e` built the production app and passed all 51 Chromium workflows. The correction also passed lint, typecheck, 470 unit tests, 71 matching tests and two setup checks on Node 24.
+
+### Independent review of same-version preview coordination
+
+Reviewed the REUSE-1.2 working diff over `6196188`. The 91 submitted PostgreSQL tests covering loopback routing, travel times and migration/reset passed, including all four same-version regressions. Six additional probes in an isolated copy exercised overlapping lookups, multiple waiting callers, deadline cleanup and roster supersession.
+
+**ISSUE-128 · The owner can miss a confirmed no-route while reading the workspace store.** Seeded finite workspace estimates from another trip. On the target trip a caller without the cookie received a confirmed no-route from the first matrix batch. Held the second matrix response, started the owner's preview and observed its pending SELECT on travel_times through pg_locks. Both callers had reached the same roster version. Controlled the order by releasing a PostgreSQL table lock and returning a loopback 503 on the second batch.
+
+| Event that finished first | Saved result on dashboard reload |
+|---|---|
+| Owner’s lookup finished and registered the owner with the routing caller | Zero riders |
+| The second matrix call failed while the owner’s lookup was still waiting | One rider at 231 seconds |
+
+The routing caller returned 503 in both runs, and the owner returned 200 without another matrix request. The failed holder released the trip observation before the owner finished its database read in the second run. Preserve access to settled observations across an overlapping lookup, then verify the trip, policy, version and candidate before using them. [Workspace lookup and publication registration](../src/trips/preview.ts)
+
+**ISSUE-130 · Callers can receive retry errors after a winner commits.** Two independent schedules used a workspace that covered every leg. In the first, two callers without cookies waited for one covered publisher. One received its committed preview and the other received 429 PREVIEW_BUSY. Immediate retry read the same preview. Save and reload confirmed one rider at 231 seconds. In the second, a routing caller waited behind one covered publisher, then a later covered peer paused before writing. The first publisher committed. A fresh request read that row 850 ms after the waiting request started. The waiting request expired at 10.002 seconds with 503 DATABASE_UNAVAILABLE. The later peer returned the original winner when released. Neither schedule sent any matrix requests for the target trip. Signal the first successful commit independently of last-publisher cleanup and let waiting callers check the winner before competing for routing. [Publication completion and permit acquisition](../src/trips/routing-permit.ts)
+
+Two controls passed. A covered caller with a short deadline timed out while the active routing caller continued, published its no-route and served the retry. A capacity edit with both the routing caller and a same-version owner waiting produced two stale responses and one newer preview that saved zero riders without another matrix call.
+
+Lint, typecheck, the clean-copy production build, 470 unit tests, 71 matching tests and two setup checks passed independently. The full 318 PostgreSQL and 51 Chromium results belong to the implementation run. All probes used the designated PostgreSQL test database and fictional addresses. Zero live provider requests ran. REUSE-1.2 stays in correction.
+
+### REUSE-1.2 overlapping lookup and committed preview wakeup
+
+The student asked Codex to fix ISSUE-128 and ISSUE-130 on the working diff over `6196188` and keep REUSE-1.2 open. Scope covers retaining settled routing observations during an overlapping database read and waking peers on the first durable publication. Independent review is pending.
+
+| Issue | PostgreSQL and loopback verification |
+|---|---|
+| ISSUE-128 | The test held an actual lock on `travel_times` and confirmed the pending lookup through `pg_locks`. Routing returned a confirmed no-route in its first batch and 503 in its second. With either the lookup or the routing failure allowed to finish first, the owner published, saved and reloaded zero riders. The owner dispatched no matrix requests. |
+| ISSUE-130 | Two routing callers waited behind a covered publisher. In both runs they returned the same committed preview with 200 under their original deadline. One run held a second covered publisher at its barrier until both waiters had returned. Only one preview row was written. Save and reload confirmed one rider at 231 seconds. The target trip dispatched zero matrix requests. |
+| ISSUE-130, supersession | A caller was already waiting for an older routing holder to exit when a covered publisher committed the newer version. The waiter read the winner while the old holder was still paused. The old holder returned 409 on release. Save and reload confirmed zero riders and the newer version dispatched no matrix requests. |
+
+Live previews retain the trip, roster version and policy of their first database read so an overlapping holder can leave its validated cells available after failure. The first acknowledged publication or a fresh read of the durable winner signals waiting requests independently of publisher cleanup. Waiters reread PostgreSQL before routing, so the signal carries no preview data. [Admission and notification](../src/trips/routing-permit.ts) · [Integration cases](../tests/concurrency/geoapify.integration.test.ts)
+
+`npm run test:concurrency -- travel-times geoapify address-reset-upgrade` passed all 95 tests, including the prior same-version, supersession, deferred-write and versioned-history cases. Lint, typecheck, 470 unit tests, 71 matching tests and two setup checks passed on Node 24. Verification used zero live Geoapify requests.
+
+`npm run test:e2e` built the production app and passed all 51 Chromium workflows on the designated PostgreSQL test database. The final `npm run test:concurrency` passed all 323 cases, including the additional superseded-holder wakeup regression.
+
+### Independent review of lookup retention and commit notification
+
+The independent run over the working diff based on `6196188` passed all 323 submitted PostgreSQL cases. This includes both orders of the same-version blocked lookup, both multi-waiter cases and the newer winner waking a routing waiter. Six additional probes used a counting loopback provider and the designated PostgreSQL test database in an isolated copy.
+
+**ISSUE-128 · A pending workspace lookup can lose a trip observation across a seat edit or a covered publisher’s exit.** A separate trip supplied the older finite workspace times. On the target trip the provider returned a confirmed no-route to the pickup. PostgreSQL’s pending AccessShareLock on travel_times established that the owner had already read the new roster and was waiting for its workspace lookup. Each comparison used the same driver, passenger, routing policy, capacity of two and provider responses.
+
+| Holder of the confirmed no-route | Lookup finishes while the holder is present | Holder exits while the lookup is blocked |
+|---|---|---|
+| Routing caller for the preceding roster version. Both matrix calls succeeded. The seat edit made its publication return 409. | Saved and reloaded zero riders | Saved and reloaded one rider at 231 seconds |
+| Covered publisher for the same version as the blocked lookup. It had inherited the no-route from the superseded caller. The probe injected a failure before this publisher could write. | Saved and reloaded zero riders | Saved and reloaded one rider at 231 seconds |
+
+The final owner request made zero matrix calls in all four cases. Lookup registration retains a routing holder only when its version matches. It also leaves out observations held solely by a covered publisher. An overlapping lookup needs a reference to eligible trip observations from either source until it can filter them for its roster. [Lookup registration](../src/trips/routing-permit.ts) · [Preview merge](../src/trips/preview.ts)
+
+**ISSUE-130 · A covered waiter can miss a fresh read of the committed winner.** Started an owner request with the normal ten-second deadline, paused its workspace read, then admitted routing and let the owner join it. The probe delayed the return from a real, successful PostgreSQL COMMIT. A third request read the durable row and signalled publication at 618 ms. The waiting owner returned 503 DATABASE_UNAVAILABLE at 10.002 seconds. The routing caller then received its original preview when the acknowledgement was released. In the control, releasing the acknowledgement just after the fresh read let the owner return 200 with the same preview at 624 ms. The covered-wait branch listens only for holder exit. It should also wake on verified publication and reread the winner within its original deadline. [Covered wait](../src/trips/preview.ts) · [Publication signal](../src/trips/routing-permit.ts)
+
+The clean production build, lint, typecheck, 470 unit tests, 71 matching tests and two setup checks also passed independently. The 51 Chromium results are from the implementation run. Review made zero live Geoapify requests. REUSE-1.2 remains in correction. Live cross-trip reuse remains gated by ISSUE-109.
+
+### REUSE-1.2 cross-version lookup and covered commit wakeup
+
+The student asked Codex to fix the reopened ISSUE-128 and ISSUE-130 on the working diff over `6196188`, preserve earlier fixes, and keep REUSE-1.2 open. The bounded work covers observations held by superseded routing and failed covered publishers, plus covered callers waiting during a delayed commit acknowledgement. Independent signoff is pending.
+
+| Finding | Regression result |
+|---|---|
+| ISSUE-128, superseded routing | Both matrix requests succeeded and the pickup was confirmed unreachable. A real PostgreSQL lock held the newer owner's workspace lookup. Whether the superseded routing caller returned 409 before or after the lookup, Save and reload showed zero riders. |
+| ISSUE-128, covered publisher | The preceding routing caller had already exited. An injected failure made the covered publisher exit without writing. With either the failure or the blocked lookup allowed to finish first, the remaining caller saved and reloaded zero riders. Across all four scenarios the final caller made no matrix requests. |
+| ISSUE-130 | A real PostgreSQL COMMIT completed while the routing caller's acknowledgement was held. A fresh reader saw the durable row. The covered waiter then returned 200 with the same preview before the acknowledgement was released. Save and reload showed zero riders. |
+
+Lookup registration now keeps eligible cells from either source on exit, scoped to the trip, policy and same or newer roster version. The current roster still filters those cells before reuse. A unit test verifies that cells unique to a covered peer survive that peer's exit, that an earlier roster and another policy cannot read them, and that the last lookup releases them. Covered callers now wait for the same verified-publication signal that wakes routing waiters. [Admission and handoff](../src/trips/routing-permit.ts) · [PostgreSQL and loopback regressions](../tests/concurrency/geoapify.integration.test.ts)
+
+`npm run test:concurrency -- travel-times geoapify address-reset-upgrade` passed 101 cases before the covered-peer unit refinement. The final `npm run test:concurrency` passed all 328 cases, including the previous handoff, lookup ordering, wait deadlines, publication wakeup and earlier REUSE-1.2 regressions. The completed implementation also passed lint, typecheck, 471 unit tests, 71 matching tests and two setup checks. All routing used fictional data and the counting loopback stub. Zero live Geoapify requests ran.
+
+`npm run test:e2e` built the production app and passed all 51 Chromium workflows on the designated test database.
+
+### Independent review of three-version handoff and early commit notification
+
+The full 328-test PostgreSQL suite passed independently on the working diff over `6196188`, including the four blocked-lookup cases and the waiter that joined before commit verification. Four additional cases in an isolated copy tested two event orderings for each remaining finding.
+
+**ISSUE-128 · A third roster version can lose a no-route held by the middle lookup.** The loopback provider returned a confirmed no-route for the pickup. Increased the driver's seats from one to two, started an owner preview and observed its pending workspace read through PostgreSQL's lock table. The first routing caller then exited stale and handed its three estimates to the middle lookup. Increased capacity to three and used a read-transaction barrier to control when the middle lookup could finish.
+
+| When the last caller started | Result after Save and dashboard reload |
+|---|---|
+| Middle caller had reached publication, with its write still paused | Zero riders |
+| Middle caller still held the observations in its read transaction | One rider, 231 seconds |
+
+The first two callers returned 409 in both cases. Both final previews returned 200 with three reused legs and zero new matrix requests. The latest version started with an empty observation map while the only copy of the trip's no-route belonged to the preceding lookup. Preserve eligible observations across these overlapping lookups for the same trip and routing policy, and filter against the receiving roster before applying workspace hits. [Lookup registration and retention](../src/trips/routing-permit.ts)
+
+**ISSUE-130 · A waiter registering after verification can miss the committed winner.** Started a covered caller with its normal ten-second deadline and blocked its workspace read. Another caller routed and committed a real preview. Held its COMMIT acknowledgement while a third caller read the row and signalled verified publication. When verification followed covered-wait registration, the covered caller returned 200 with the same preview at 641 ms. When verification preceded registration, the third caller saw the row at 573 ms, but the covered caller expired at 10.002 seconds with 503 DATABASE_UNAVAILABLE. Releasing the acknowledgement returned the original winner to the routing caller in both probes. New covered waiters should check the version's already-recorded commit signal as well as listening for future publication, then reread the winner from PostgreSQL. [Publication notification and covered wait](../src/trips/routing-permit.ts)
+
+The clean production build, lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed independently. The 51 Chromium results are from the implementation run. The review used the designated PostgreSQL test database and fictional loopback addresses with zero live Geoapify requests. REUSE-1.2 remains in correction.
+
+### REUSE-1.2 three-version lookup and early publication fixes
+
+The student asked Codex to fix the reopened ISSUE-128 and ISSUE-130 on the working diff over `6196188` and keep REUSE-1.2 open. This episode covers trip observations held by an overlapping middle-version lookup and verified publication before a covered caller starts waiting. Independent signoff is pending.
+
+- **ISSUE-128.** After two successive seat edits, the latest preview inherited the confirmed no-route whether the middle caller was still in its read transaction or paused before publication. Both older callers returned 409. The newest preview fetched zero legs, saved zero riders and reloaded the same result. A new lookup copies eligible cells from overlapping older lookups while preserving source-version precedence and the existing roster filter.
+- **ISSUE-130.** The regression held the acknowledgement of a real PostgreSQL COMMIT and let a fresh caller verify the durable row either before or after the covered caller began waiting. In both orders the covered caller returned 200 with the same preview before the acknowledgement was released. The wait uses the version-scoped commit promise, which also remembers an earlier signal. Save and reload preserved zero riders.
+
+`npm run test:concurrency -- travel-times geoapify address-reset-upgrade` passed all 104 focused PostgreSQL tests, including earlier handoff and publication regressions. Lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed on Node 24. Verification used fictional loopback data and zero live Geoapify requests. [Regression tests](../tests/concurrency/geoapify.integration.test.ts) · [Lookup and publication coordination](../src/trips/routing-permit.ts)
+
+`npm run test:concurrency` passed all 331 PostgreSQL tests. `npm run test:e2e` built the production app and passed all 51 Chromium workflows against the designated test database.
+
+### Independent review of the three-version fixes and cached callers
+
+All 331 submitted PostgreSQL tests passed on the experimental working diff over `6196188`. Four independent probes also reran the prior review's event orderings. After two seat edits the newest preview reused three legs, sent zero new matrix requests and saved and reloaded zero riders in both cases. ISSUE-128 passed independent review. The covered caller with a routing holder returned the same committed preview before the held acknowledgement was released, whether verification happened before or after wait registration.
+
+**ISSUE-130 · Two fully cached callers can still return different HTTP outcomes.** Seeded all three workspace estimates on a different fictional trip. Paused the first owner preview before publication. Started a second owner preview for the same roster and confirmed its workspace read was blocked using PostgreSQL’s lock table. Let the first caller publish, receive 200 and signal the commit. A fresh request read that winner. Then released the second caller's workspace lookup.
+
+| Trip row when the lookup resumed | Second caller | Result in PostgreSQL |
+|---|---|---|
+| Available | Recomputed the plan and returned 200 with the same preview ID | One rider at 231 seconds after Save and reload |
+| Held by a separate transaction using SELECT FOR UPDATE | Recomputed the plan, then returned 503 DATABASE_BUSY trying to lock the row | The same winner was readable during the lock and saved and reloaded at 231 seconds |
+
+Neither run sent any matrix requests for the target trip. The older snapshot missed the preview before it was inserted. On leaving that snapshot the caller had full workspace coverage and no routing holder, so the condition guarding the read-only winner check skipped it despite the recorded publication. The ordinary publication path then required the trip write lock. [Winner check](../src/trips/preview.ts) · [Commit notification](../src/trips/routing-permit.ts)
+
+In the isolated review copy, exposing the lookup’s existing published flag to that condition let both covered callers return 200 with the same ID, with one computation in each ordering. Eleven focused cases passed in that diagnostic copy. The application working tree contains the submitted implementation. REUSE-1.2 remains in correction for ISSUE-130.
+
+The independent clean production build, lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed. The 51 Chromium results belong to the implementation run. All review probes used fictional data and the designated PostgreSQL test database. Zero live Geoapify requests ran.
+
+### REUSE-1.2 cached caller winner check
+
+The student asked Codex to address the remaining ISSUE-130 case on the working diff over `6196188` and keep REUSE-1.2 open. Scope covers a workspace-covered preview that finishes its lookup after a peer commits the same roster version. Independent signoff is pending.
+
+The regression pauses the second caller inside its original PostgreSQL read transaction after reading the workspace estimates. The first covered caller commits the preview. A separate connection optionally holds the trip row with `SELECT FOR UPDATE` while the second caller resumes. Before the change, the unlocked case computed twice and the locked case returned 503. After the change, both callers received HTTP 200 with the same preview ID. Each case computed once, issued zero matrix requests for the target trip, and saved and reloaded one rider at 231 seconds.
+
+The covered caller now uses the lookup's publication signal to enter the existing read-only winner check even when no routing holder is active. The check still verifies the current trip version and validates the stored result. `npm run test:concurrency` passed all 333 PostgreSQL tests, including both new cases and the earlier ISSUE-128 and ISSUE-130 regressions. Lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed. Zero live Geoapify requests ran. [Regression cases](../tests/concurrency/geoapify.integration.test.ts) · [Winner read](../src/trips/preview.ts)
+
+`npm run test:e2e` built the production app and passed all 51 Chromium workflows against the designated test database.
+
+### Independent review of the cached-caller winner check
+
+Reviewed the REUSE-1.2 working diff over `6196188` on `experiment/address-driving-time-reuse`. Reviewed file blobs were `f6653913c964` for [preview publication](../src/trips/preview.ts), `cd97735a4207` for [routing coordination](../src/trips/routing-permit.ts) and `6775d7101893` for the [loopback regressions](../tests/concurrency/geoapify.integration.test.ts). A covered caller that learns of a publication during its workspace lookup now reads the winner in a new transaction, checks the current roster version and validates the stored result before returning it.
+
+Seven supplemental probes ran against real PostgreSQL in an isolated copy of the submitted source. The cache-lookup cases held the travel_times table and observed the waiting query through pg_locks.
+
+| Independent check | Observed result |
+|---|---|
+| Two fully cached callers, trip row free or held with SELECT FOR UPDATE after the first caller committed | In both orders, both callers returned 200 with the same preview ID. Each run computed once, sent zero target-trip matrix requests, and saved and reloaded one rider at 231 seconds. |
+| Same overlap, with a committed capacity edit before releasing the waiting caller | The waiting caller returned 409 STALE_VERSION. Only the first caller computed for the original version. A fresh preview for the new version saved and reloaded zero riders without another matrix request. |
+| Verification before or after a cached caller began waiting for routing | Both orders returned 200 with the same preview ID before the held COMMIT acknowledgement was released. |
+| Two successive seat edits with the intermediate caller still reading or already publishing | Both newest previews reused all three estimates, fetched zero legs and saved and reloaded zero riders. |
+
+Independent verification passed all 333 PostgreSQL tests, all 51 Chromium workflows against an isolated production build, lint, typecheck, 471 unit tests, 71 matching tests and two setup checks. The review used the designated test database with fictional fixture and loopback providers and made zero live Geoapify requests. No additional correctness finding arose. ISSUE-130 and REUSE-1.2 pass independent technical review. REUSE-1.3 credit planning is next. The owner’s live-retention decision under ISSUE-109 and student course inspection remain pending.
+
 ## Checkpoint D pilot preparation
 
 The student asked Codex to proceed from committed C (`2b50353`). This episode covers D1 attribution on suggestions, previews and saved estimates, and preparing the Geoapify search path against fictional provider responses. Live L-19 measurements depend on the owner’s L-18 project and credit confirmation. Student inspection is pending.

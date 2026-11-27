@@ -43,6 +43,15 @@ export async function requireWorkspace(client: PoolClient, secret?: string): Pro
   return session.id;
 }
 
+export async function hasWorkspaceSession(client: PoolClient, workspaceId: string, secret: string): Promise<boolean> {
+  if (!secretFormat.test(secret)) return false;
+  const result = await client.query(
+    "SELECT 1 FROM workspace_sessions WHERE workspace_id = $1 AND secret_hash = $2",
+    [workspaceId, hash(secret)],
+  );
+  return result.rowCount === 1;
+}
+
 async function issueSession(client: PoolClient, id: string) {
   const secret = newSecret();
   await client.query("INSERT INTO workspace_sessions (secret_hash, workspace_id) VALUES ($1, $2)", [hash(secret), id]);

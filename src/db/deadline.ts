@@ -15,6 +15,10 @@ export class RequestDeadline {
     this.signal = caller ? AbortSignal.any([caller, timeout]) : timeout;
   }
 
+  hasTime(ms: number): boolean {
+    return !this.signal.aborted && this.end - performance.now() > ms;
+  }
+
   remaining() {
     const ms = Math.floor(this.end - performance.now());
     if (ms < 1 || this.signal.aborted) throw this.expired();

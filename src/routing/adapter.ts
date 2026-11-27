@@ -8,11 +8,16 @@
 import type { DirectedPair } from "../matching/address.ts";
 import type { ProviderName } from "../locations/snapshot.ts";
 
+export interface ObservedCell {
+  index: number;
+  seconds: number | null;
+}
+
 export interface RoutingRequest {
   venueId: string;
   signal?: AbortSignal;
-  /** A live batch has been fully decoded. Indexes refer to the original pair list. */
-  onObservation?: (index: number, seconds: number | null, observedAt: string) => void;
+  /** A batch has been fully decoded. Indexes refer to the original pair list. */
+  onBatch?: (cells: readonly ObservedCell[], observedAt: string) => void;
 }
 
 export interface RoutingAdapter {

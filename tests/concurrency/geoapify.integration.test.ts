@@ -8,10 +8,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { PreviewDeadline } from "../../src/db/deadline.ts";
 import { __setTransactionCommitFaultHook } from "../../src/db/transaction.ts";
 import * as permits from "../../src/trips/routing-permit.ts";
+import * as travelTimes from "../../src/trips/travel-times.ts";
 import { legKey, type Leg } from "../../src/matching/address.ts";
-import { editDriver } from "../../src/trips/service.ts";
+import { addressCounters, resetAddressCounters } from "../../src/trips/address-metrics.ts";
+import { editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { commitPreview } from "../../src/trips/commit.ts";
 import { runPreview } from "../../src/app/api/http.ts";
 import { createPool } from "../../src/db/pool.ts";
+import { bootstrapWorkspace } from "../../src/workspaces/service.ts";
 import { geoapifyRoutingAdapter, GeoapifyRateLimit } from "../../src/routing/geoapify.ts";
 import { __setRoutingAdapterForTests, routingPolicyFor } from "../../src/routing/index.ts";
 import { __setPublishBarrier, publishPreview } from "../../src/trips/preview.ts";
@@ -392,7 +396,7 @@ test.each(["valid", "corrupt"])("ISSUE-078: covered handoff respects %s stored e
   }
 
   // Stage distinguishable observations for the same endpoints in an older permit.
-  const old = await permits.acquireRouting(tripId, prior.baseVersion, routingPolicyFor("geoapify"), new PreviewDeadline());
+  const old = (await permits.acquireRouting(tripId, prior.baseVersion, routingPolicyFor("geoapify"), new PreviewDeadline()))!;
   for (const leg of evidence.legs as Leg[]) old.settled.set(legKey(leg.from, leg.to), { ...leg, seconds: 99 });
   try {
     // Canceling removes both driver legs from the retention set. The valid
@@ -513,7 +517,7 @@ test("L-14: same-version peer is busy, successor waits for settlement and keeps 
     expect(stub.calls).toHaveLength(2);
     settle.open();
     expect((await old).status).toBe(409);
-    const result = await newer;
+    const result = (await newer)!;
     expect(result.status).toBe(200);
     const winner = await result.json();
     expect(winner.estimate.legs).toMatchObject({ required: 3, reused: 1, fetched: 2 });
@@ -673,4 +677,889 @@ test("L-14: a new version aborts a stalled body and reuses the earlier validated
   expect(stub.calls.map((call) => call.body.targets)).toEqual([[waypoint(pickup)], [waypoint(venue)], [waypoint(venue)]]);
   const rows = (await pool.query("SELECT base_version FROM match_previews WHERE trip_id=$1", [tripId])).rows;
   expect(rows).toEqual([{ base_version: version + 1 }]);
+});
+
+async function pinToWorkspace(id: string, workspaceId: string) {
+  const admin = createPool(SETUP, 1);
+  try {
+    await admin.query("UPDATE trips SET workspace_id=$2, venue_location=venue_location || $3::jsonb WHERE id=$1",
+      [id, workspaceId, { provider: "geoapify" }]);
+    await admin.query("UPDATE drivers SET location=location || $2::jsonb WHERE trip_id=$1", [id, { provider: "geoapify" }]);
+    await admin.query("UPDATE ride_requests SET location=location || $2::jsonb WHERE trip_id=$1", [id, { provider: "geoapify" }]);
+  } finally { await admin.end(); }
+}
+
+async function sameCoordinatesTrip(workspaceId: string) {
+  process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+  try {
+    const id = await createSyntheticTrip(pool, venue);
+    await addSyntheticDriver(pool, id, "D", driver, 1);
+    await addSyntheticPassenger(pool, id, "P", pickup);
+    await pinToWorkspace(id, workspaceId);
+    return id;
+  } finally {
+    process.env.GROUPRIDE_ADDRESS_PROVIDER = "geoapify";
+  }
+}
+
+test("SC-01: workspace-covered loopback preview sends no matrix request and takes no permit", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const second = await sameCoordinatesTrip(owner.id);
+  const liveGate = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, tripId, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  expect(stub.calls).toHaveLength(2);
+  const admission = vi.spyOn(permits, "acquireRouting");
+  try {
+    const warmed = await publishPreview(pool, second, undefined, owner.secret);
+    expect(warmed.body).toMatchObject({ optimal: { matchedCount: 1, totalCost: 231 }, estimate: { legs: { reused: 3, fetched: 0 } } });
+    expect(stub.calls).toHaveLength(2);
+    expect(admission).not.toHaveBeenCalled();
+  } finally {
+    admission.mockRestore();
+  }
+
+  // The default live adapter cannot use the populated workspace store. Disable
+  // dispatch so the negative control remains completely offline.
+  __setRoutingAdapterForTests(undefined);
+  process.env.GROUPRIDE_ADDRESS_PROVIDER = "off";
+  expect((await runPreview(() => publishPreview(pool, liveGate, undefined, owner.secret))).status).toBe(503);
+  expect(stub.calls).toHaveLength(2);
+});
+
+test("SC-06: a confirmed no-route stays trip-local and is queried again on another trip", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const next = await sameCoordinatesTrip(owner.id);
+  stub.respondWith((res, body) => {
+    const result = matrix(body);
+    if (stub.calls.length === 1) result.sources_to_targets[0][0].time = null;
+    res.end(JSON.stringify(result));
+  });
+  expect((await publishPreview(pool, tripId, undefined, owner.secret)).body.optimal.matchedCount).toBe(0);
+  expect((await pool.query("SELECT seconds FROM travel_times WHERE workspace_id=$1 ORDER BY seconds", [owner.id])).rows)
+    .toEqual([{ seconds: 346.75 }, { seconds: 519.5 }]);
+  const warmed = await publishPreview(pool, next, undefined, owner.secret);
+  expect(warmed.body).toMatchObject({ optimal: { matchedCount: 1 }, estimate: { legs: { reused: 2, fetched: 1 } } });
+  expect(stub.calls.map(call => call.body.targets)).toEqual([[waypoint(pickup)], [waypoint(venue)], [waypoint(pickup)]]);
+});
+
+test("SC-07: a settled batch persists and reaches its successor during supersession", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const stalled = barrier();
+  stub.respondWith((res, body) => {
+    if (stub.calls.length === 2) {
+      res.writeHead(200).write("{");
+      stalled.open();
+    } else res.end(JSON.stringify(matrix(body)));
+  });
+  const { version } = (await pool.query("SELECT version FROM trips WHERE id=$1", [tripId])).rows[0];
+  const old = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+  await stalled.reached;
+  expect((await pool.query("SELECT 1 FROM travel_times WHERE workspace_id=$1", [owner.id])).rowCount).toBe(0);
+  expect((await editDriver(pool, tripId, firstDriver, randomUUID(), { baseVersion: version, seatCapacity: 0 })).httpStatus).toBe(200);
+  const next = await publishPreview(pool, tripId, undefined, owner.secret);
+  expect((await old).status).toBe(409);
+  expect((await pool.query("SELECT seconds FROM travel_times WHERE workspace_id=$1", [owner.id])).rows)
+    .toEqual([{ seconds: 403.25 }]);
+  const rows = await pool.query("SELECT id, evidence->'legs' AS legs FROM match_previews WHERE trip_id=$1", [tripId]);
+  expect(rows.rows).toEqual([{ id: next.body.previewId, legs: [expect.objectContaining({ seconds: 403.25 })] }]);
+  expect(stub.calls).toHaveLength(2);
+});
+
+test("ISSUE-123: a pickup at the venue shares a directed observation on cold and warm previews", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const second = await sameCoordinatesTrip(owner.id);
+  const admin = createPool(SETUP, 1);
+  try {
+    await admin.query("UPDATE ride_requests SET location=location || $2::jsonb WHERE trip_id=ANY($1::uuid[])",
+      [[tripId, second], { lon: venue.lon, lat: venue.lat }]);
+  } finally { await admin.end(); }
+  // A second request for the same cell would create a 1,000-second difference.
+  stub.respondWith((res, body) => {
+    const result = matrix(body);
+    if (stub.calls.length === 1) result.sources_to_targets[0][0].time = 1519.5;
+    res.end(JSON.stringify(result));
+  });
+  const cold = await publishPreview(pool, tripId, undefined, owner.secret);
+  const warm = await publishPreview(pool, second, undefined, owner.secret);
+  for (const preview of [cold, warm]) expect(preview.body.optimal).toMatchObject({ matchedCount: 1, totalCost: 0 });
+  expect(stub.calls).toHaveLength(1);
+  expect(stub.calls[0].body).toMatchObject({ sources: [waypoint(driver)], targets: [waypoint(venue)] });
+  const { rows } = await pool.query("SELECT evidence->'legs' AS legs FROM match_previews WHERE id=$1", [cold.body.previewId]);
+  const legs = (rows[0].legs as Leg[]).filter(leg => leg.source === "provider");
+  expect(legs).toHaveLength(2);
+  expect(legs.map(leg => leg.seconds)).toEqual([1519.5, 1519.5]);
+  expect(new Set(legs.map(leg => leg.observedAt)).size).toBe(1);
+});
+
+test("ISSUE-125: an in-flight preview hands off completed estimates to a co-located rider", async () => {
+  const computed = barrier();
+  const release = barrier();
+  let first = true;
+  const restore = __setPublishBarrier(async () => {
+    if (!first) return;
+    first = false;
+    computed.open();
+    await release.reached;
+  });
+  const observe = vi.spyOn(permits, "observeVersion");
+  const old = preview();
+  let next: Promise<Response> | undefined;
+  try {
+    await computed.reached;
+    const admin = createPool(SETUP, 1);
+    try {
+      await admin.query("UPDATE trips SET venue_location=venue_location || '{\"provider\":\"fixture\"}'::jsonb WHERE id=$1", [tripId]);
+      process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+      await addSyntheticPassenger(pool, tripId, "Co-located rider", pickup);
+      await pinToWorkspace(tripId, (await bootstrapWorkspace(pool)).id);
+    } finally {
+      process.env.GROUPRIDE_ADDRESS_PROVIDER = "geoapify";
+      await admin.end();
+    }
+    const { version } = (await pool.query("SELECT version FROM trips WHERE id=$1", [tripId])).rows[0];
+    next = preview();
+    await expect.poll(() => observe.mock.calls.some(([id, observed]) => id === tripId && observed === version)).toBe(true);
+    release.open();
+    expect((await old).status).toBe(409);
+    const response = await next;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ optimal: { matchedCount: 1, totalCost: 231 }, estimate: { legs: { fetched: 0, reused: 5 } } });
+    expect(stub.calls).toHaveLength(2);
+  } finally {
+    release.open();
+    restore();
+    observe.mockRestore();
+    await Promise.allSettled([old, next]);
+  }
+});
+
+test.each([false, true])("ISSUE-126: final cells publish with 240 ms left (store locked: %s)", async locked => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const final = barrier();
+  let reply: (() => void) | undefined;
+  stub.respondWith((res, body) => {
+    if (stub.calls.length === 1) res.end(JSON.stringify(matrix(body)));
+    else {
+      reply = () => res.end(JSON.stringify(matrix(body)));
+      final.open();
+    }
+  });
+  const admin = createPool(SETUP, 1);
+  const locker = await admin.connect();
+  // Advance the request's monotonic clock only after the provider reaches the
+  // final response. Real SQL runs under the remaining statement time budget.
+  const clock = vi.spyOn(performance, "now").mockReturnValue(1000);
+  resetAddressCounters();
+  const outcome = runPreview(() => publishPreview(pool, tripId, new PreviewDeadline(), owner.secret));
+  try {
+    await final.reached;
+    if (locked) {
+      await locker.query("BEGIN");
+      await locker.query("LOCK travel_times IN SHARE MODE");
+    }
+    clock.mockReturnValue(10_760);
+    reply!();
+    reply = undefined;
+    const response = await outcome;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ optimal: { matchedCount: 1, totalCost: 231 } });
+    expect(stub.calls).toHaveLength(2);
+    expect(addressCounters.travelTimeWriteFailed).toBe(0);
+    expect((await pool.query("SELECT 1 FROM travel_times WHERE workspace_id=$1", [owner.id])).rowCount).toBe(0);
+  } finally {
+    clock.mockRestore();
+    reply?.();
+    if (locked) await locker.query("ROLLBACK");
+    locker.release();
+    await admin.end();
+    await outcome;
+  }
+});
+
+test.each(["without-cookie", "partial-store", "covered-store"] as const)(
+  "ISSUE-128: a settled no-route takes precedence over finite workspace estimates (%s)",
+  async mode => {
+    const owner = await bootstrapWorkspace(pool);
+    await pinToWorkspace(tripId, owner.id);
+    const warm = await sameCoordinatesTrip(owner.id);
+    expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+    if (mode === "partial-store") {
+      const admin = createPool(SETUP, 1);
+      try { await admin.query("DELETE FROM travel_times WHERE workspace_id=$1 AND seconds=519.5", [owner.id]); }
+      finally { await admin.end(); }
+    }
+    stub.respondWith((res, body) => {
+      const result = matrix(body);
+      if (stub.calls.length === 3) result.sources_to_targets[0][0].time = null;
+      res.end(JSON.stringify(result));
+    });
+    const computed = barrier();
+    const release = barrier();
+    const restore = __setPublishBarrier(async () => {
+      computed.open();
+      await release.reached;
+    });
+    const observe = vi.spyOn(permits, "observeVersion");
+    const old = preview();
+    let next: Promise<Awaited<ReturnType<typeof publishPreview>>> | undefined;
+    try {
+      await computed.reached;
+      const { version } = (await pool.query("SELECT version FROM trips WHERE id=$1", [tripId])).rows[0];
+      expect((await editDriver(pool, tripId, firstDriver, randomUUID(), { baseVersion: version, seatCapacity: 2 })).httpStatus).toBe(200);
+      next = publishPreview(pool, tripId, undefined, mode === "without-cookie" ? undefined : owner.secret);
+      // Attach rejection handling before waiting for the successor's handoff.
+      void next.catch(() => {});
+      await expect.poll(() => observe.mock.calls.some(([id, observed]) => id === tripId && observed === version + 1)).toBe(true);
+      release.open();
+      expect((await old).status).toBe(409);
+      const { body } = await next;
+      expect(body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+      expect(body.estimate?.legs).toMatchObject({ fetched: 0, reused: 3 });
+      expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+      expect(await getTripSnapshot(pool, tripId)).toMatchObject({ status: "assigned", totals: { matched: 0, totalCost: 0 } });
+      expect(stub.calls).toHaveLength(4);
+    } finally {
+      release.open();
+      restore();
+      observe.mockRestore();
+      await Promise.allSettled([old, next]);
+    }
+  },
+);
+
+test("ISSUE-126: a locked store neither delays the second dispatch nor prevents publication", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  resetAddressCounters();
+  const second = barrier();
+  let finishSecond: (() => void) | undefined;
+  stub.respondWith((res, body) => {
+    if (stub.calls.length === 1) res.end(JSON.stringify(matrix(body)));
+    else {
+      finishSecond = () => res.end(JSON.stringify(matrix(body)));
+      second.open();
+    }
+  });
+  const admin = createPool(SETUP, 1);
+  const locker = await admin.connect();
+  let outcome: Promise<Response> | undefined;
+  try {
+    await locker.query("BEGIN");
+    await locker.query("LOCK travel_times IN SHARE MODE");
+    outcome = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+    await second.reached;
+    // If the first batch awaited a write, it could only reach the second
+    // dispatch after that write timed out on the still-held SHARE lock.
+    expect(addressCounters.travelTimeWriteFailed).toBe(0);
+    finishSecond!();
+    finishSecond = undefined;
+    const response = await outcome;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ optimal: { matchedCount: 1, totalCost: 231 } });
+    expect(addressCounters.travelTimeWriteFailed).toBe(1);
+    expect((await locker.query("SELECT 1 FROM match_previews WHERE trip_id=$1", [tripId])).rowCount).toBe(1);
+    expect((await locker.query("SELECT 1 FROM travel_times WHERE workspace_id=$1", [owner.id])).rowCount).toBe(0);
+    expect(stub.calls).toHaveLength(2);
+  } finally {
+    finishSecond?.();
+    await locker.query("ROLLBACK");
+    locker.release();
+    await admin.end();
+    await outcome;
+  }
+});
+
+test.each(["owner ready first", "routing released first", "routing publication fails"] as const)(
+  "ISSUE-128: same-version peers preserve a confirmed no-route (%s)",
+  async order => {
+    const owner = await bootstrapWorkspace(pool);
+    await pinToWorkspace(tripId, owner.id);
+    const warm = await sameCoordinatesTrip(owner.id);
+    expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+    stub.respondWith((res, body) => {
+      const reply = matrix(body);
+      if (stub.calls.length === 3) reply.sources_to_targets[0][0].time = null;
+      res.end(JSON.stringify(reply));
+    });
+    const routingComputed = barrier();
+    const releaseRouting = barrier();
+    const releaseOwner = barrier();
+    const ownerAdmitted = barrier();
+    const ownerComputed = barrier();
+    let computations = 0;
+    const restore = __setPublishBarrier(async () => {
+      if (++computations === 1) {
+        routingComputed.open();
+        await releaseRouting.reached;
+        if (order === "routing publication fails") throw new Error("Injected failure after routing settled.");
+      } else {
+        ownerComputed.open();
+        await releaseOwner.reached;
+      }
+    });
+    const retain = permits.retainForPublication;
+    const admission = vi.spyOn(permits, "retainForPublication").mockImplementation((...args) => {
+      const covered = retain(...args);
+      if (covered.routing) ownerAdmitted.open();
+      return covered;
+    });
+    const routing = preview();
+    let covered: Promise<Response> | undefined;
+    try {
+      await routingComputed.reached;
+      if (order === "owner ready first") releaseOwner.open();
+      covered = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+      // The old race reaches the second computation rather than joining the
+      // first request. Resolve either event so the regression fails promptly.
+      const waiting = await Promise.race([
+        ownerAdmitted.reached.then(() => true), ownerComputed.reached.then(() => false),
+      ]);
+      expect(waiting).toBe(true);
+      expect((await pool.query("SELECT 1 FROM match_previews WHERE trip_id=$1", [tripId])).rowCount).toBe(0);
+      releaseRouting.open();
+      const first = await routing;
+      expect(first.status).toBe(order === "routing publication fails" ? 500 : 200);
+      releaseOwner.open();
+      const second = await covered;
+      expect(second.status).toBe(200);
+      const body = await second.json();
+      expect(body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+      if (first.ok) expect(await first.json()).toEqual(body);
+      expect(computations).toBe(first.ok ? 1 : 2);
+      expect((await pool.query("SELECT id FROM match_previews WHERE trip_id=$1", [tripId])).rows)
+        .toEqual([{ id: body.previewId }]);
+      expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+      expect(await getTripSnapshot(pool, tripId)).toMatchObject({ status: "assigned", totals: { matched: 0, totalCost: 0 } });
+      expect(stub.calls).toHaveLength(4);
+    } finally {
+      releaseRouting.open();
+      releaseOwner.open();
+      await Promise.allSettled([routing, covered]);
+      admission.mockRestore();
+      restore();
+    }
+  },
+);
+
+test("ISSUE-128: routing waits when a same-version workspace-covered caller is already publishing", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  const ready = barrier();
+  const release = barrier();
+  const attemptingAdmission = barrier();
+  let computations = 0;
+  const restore = __setPublishBarrier(async () => {
+    computations++;
+    ready.open();
+    await release.reached;
+  });
+  const acquire = permits.acquireRouting;
+  const admission = vi.spyOn(permits, "acquireRouting").mockImplementation((...args) => {
+    const result = acquire(...args);
+    attemptingAdmission.open();
+    return result;
+  });
+  const covered = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+  let routing: Promise<Response> | undefined;
+  try {
+    await ready.reached;
+    routing = preview();
+    await attemptingAdmission.reached;
+    release.open();
+    const [first, second] = await Promise.all([covered, routing]);
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const body = await first.json();
+    expect(await second.json()).toEqual(body);
+    expect(body.optimal).toMatchObject({ matchedCount: 1, totalCost: 231 });
+    expect(computations).toBe(1);
+    expect(stub.calls).toHaveLength(2);
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ status: "assigned", totals: { matched: 1, totalCost: 231 } });
+  } finally {
+    release.open();
+    await Promise.allSettled([covered, routing]);
+    admission.mockRestore();
+    restore();
+  }
+});
+
+test.each([false, true])("ISSUE-128: a failed holder's no-route survives a blocked workspace lookup (fail first: %s)", async failFirst => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  const secondCall = barrier();
+  const fail = barrier();
+  stub.respondWith((res, body) => {
+    if (stub.calls.length === 3) {
+      const response = matrix(body);
+      response.sources_to_targets[0][0].time = null;
+      res.end(JSON.stringify(response));
+    } else {
+      secondCall.open();
+      void fail.reached.then(() => res.writeHead(503).end());
+    }
+  });
+  const joined = barrier();
+  const retain = permits.retainForPublication;
+  const admission = vi.spyOn(permits, "retainForPublication").mockImplementation((...args) => {
+    const handle = retain(...args);
+    joined.open();
+    return handle;
+  });
+  const admin = createPool(SETUP, 2);
+  const locker = await admin.connect();
+  const routing = preview();
+  let covered: Promise<Response> | undefined;
+  try {
+    await secondCall.reached;
+    await locker.query("BEGIN");
+    await locker.query("LOCK travel_times IN ACCESS EXCLUSIVE MODE");
+    covered = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+    await expect.poll(async () => (await admin.query(
+      `SELECT 1 FROM pg_locks
+       WHERE relation = 'travel_times'::regclass AND mode = 'AccessShareLock' AND NOT granted`,
+    )).rowCount, { interval: 10, timeout: 1200 }).toBe(1);
+    if (failFirst) {
+      fail.open();
+      expect((await routing).status).toBe(503);
+    }
+    await locker.query("ROLLBACK");
+    await joined.reached;
+    fail.open();
+    expect((await routing).status).toBe(503);
+    const result = await covered;
+    expect(result.status).toBe(200);
+    const body = await result.json();
+    expect(body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 0, totalCost: 0 } });
+    expect(stub.calls).toHaveLength(4);
+  } finally {
+    fail.open();
+    await locker.query("ROLLBACK");
+    locker.release();
+    await admin.end();
+    await Promise.allSettled([routing, covered]);
+    admission.mockRestore();
+  }
+});
+
+test.each([false, true])("ISSUE-130: the first commit wakes both routing waiters (covered peer still paused: %s)", async pausePeer => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  const firstComputed = barrier();
+  const peerComputed = barrier();
+  const releaseFirst = barrier();
+  const releasePeer = barrier();
+  const waiting = barrier();
+  let computations = 0;
+  let admissions = 0;
+  const restore = __setPublishBarrier(async () => {
+    if (++computations === 1) {
+      firstComputed.open();
+      await releaseFirst.reached;
+    } else {
+      peerComputed.open();
+      await releasePeer.reached;
+    }
+  });
+  const acquire = permits.acquireRouting;
+  const admission = vi.spyOn(permits, "acquireRouting").mockImplementation((...args) => {
+    const result = acquire(...args);
+    if (++admissions === 2) waiting.open();
+    return result;
+  });
+  const requests = [runPreview(() => publishPreview(pool, tripId, undefined, owner.secret))];
+  try {
+    await firstComputed.reached;
+    requests.push(
+      runPreview(() => publishPreview(pool, tripId, new PreviewDeadline(2500))),
+      runPreview(() => publishPreview(pool, tripId, new PreviewDeadline(2500))),
+    );
+    await waiting.reached;
+    if (pausePeer) {
+      requests.push(runPreview(() => publishPreview(pool, tripId, undefined, owner.secret)));
+      await peerComputed.reached;
+    }
+    releaseFirst.open();
+    const published = await Promise.all(requests.slice(0, 3));
+    expect(published.map(res => res.status)).toEqual([200, 200, 200]);
+    const body = await published[0].json();
+    expect(await published[1].json()).toEqual(body);
+    expect(await published[2].json()).toEqual(body);
+    expect((await pool.query("SELECT id FROM match_previews WHERE trip_id=$1", [tripId])).rows)
+      .toEqual([{ id: body.previewId }]);
+    releasePeer.open();
+    if (pausePeer) expect(await (await requests[3]).json()).toEqual(body);
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 1, totalCost: 231 } });
+    expect(stub.calls).toHaveLength(2);
+  } finally {
+    releaseFirst.open();
+    releasePeer.open();
+    await Promise.allSettled(requests);
+    admission.mockRestore();
+    restore();
+  }
+});
+
+test("ISSUE-130: a committed newer preview wakes a waiter before the superseded holder exits", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  stub.respondWith((res, body) => {
+    const result = matrix(body);
+    if (stub.calls.length === 3) result.sources_to_targets[0][0].time = null;
+    res.end(JSON.stringify(result));
+  });
+  const oldComputed = barrier();
+  const releaseOld = barrier();
+  const waiting = barrier();
+  const { version } = (await pool.query("SELECT version FROM trips WHERE id=$1", [tripId])).rows[0];
+  let first = true;
+  const restore = __setPublishBarrier(async () => {
+    if (!first) return;
+    first = false;
+    oldComputed.open();
+    await releaseOld.reached;
+  });
+  const acquire = permits.acquireRouting;
+  const admission = vi.spyOn(permits, "acquireRouting").mockImplementation((...args) => {
+    const result = acquire(...args);
+    if (args[1] === version + 1) waiting.open();
+    return result;
+  });
+  const old = preview();
+  let waiter: Promise<Response> | undefined;
+  try {
+    await oldComputed.reached;
+    expect((await editDriver(pool, tripId, firstDriver, randomUUID(), { baseVersion: version, seatCapacity: 2 })).httpStatus).toBe(200);
+    waiter = runPreview(() => publishPreview(pool, tripId, new PreviewDeadline(2500)));
+    await waiting.reached;
+    const covered = await publishPreview(pool, tripId, undefined, owner.secret);
+    const result = await waiter;
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual(covered.body);
+    expect(covered.body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+    releaseOld.open();
+    expect((await old).status).toBe(409);
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: covered.body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 0, totalCost: 0 } });
+    expect(stub.calls).toHaveLength(4);
+  } finally {
+    releaseOld.open();
+    await Promise.allSettled([old, waiter]);
+    admission.mockRestore();
+    restore();
+  }
+});
+
+test.each([
+  ["superseded routing", false], ["superseded routing", true],
+  ["covered publisher", false], ["covered publisher", true],
+] as const)("ISSUE-128: blocked lookup retains observations from %s (exit first: %s)", async (source, exitFirst) => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  stub.respondWith((res, body) => {
+    const result = matrix(body);
+    if (stub.calls.length === 3) result.sources_to_targets[0][0].time = null;
+    res.end(JSON.stringify(result));
+  });
+  const oldReady = barrier();
+  const releaseOld = barrier();
+  const peerReady = barrier();
+  const releasePeer = barrier();
+  const targetReady = barrier();
+  const releaseTarget = barrier();
+  let computations = 0;
+  const restore = __setPublishBarrier(async () => {
+    const computation = ++computations;
+    if (computation === 1) {
+      oldReady.open();
+      await releaseOld.reached;
+    } else if (computation === 2 && source === "covered publisher") {
+      peerReady.open();
+      await releasePeer.reached;
+      throw new Error("Injected covered publication failure.");
+    } else {
+      targetReady.open();
+      await releaseTarget.reached;
+    }
+  });
+  const admin = createPool(SETUP, 2);
+  const locker = await admin.connect();
+  const { version } = (await pool.query("SELECT version FROM trips WHERE id=$1", [tripId])).rows[0];
+  const old = preview();
+  let peer: Promise<Response> | undefined;
+  let target: Promise<Response> | undefined;
+  let locked = false;
+  try {
+    await oldReady.reached;
+    expect((await editDriver(pool, tripId, firstDriver, randomUUID(), { baseVersion: version, seatCapacity: 2 })).httpStatus).toBe(200);
+    if (source === "covered publisher") {
+      peer = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+      await peerReady.reached;
+      releaseOld.open();
+      expect((await old).status).toBe(409);
+    }
+    await locker.query("BEGIN");
+    locked = true;
+    await locker.query("LOCK travel_times IN ACCESS EXCLUSIVE MODE");
+    target = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+    await expect.poll(async () => (await admin.query(
+      `SELECT 1 FROM pg_locks
+       WHERE relation = 'travel_times'::regclass AND mode = 'AccessShareLock' AND NOT granted`,
+    )).rowCount, { interval: 10, timeout: 1200 }).toBe(1);
+    const releaseSource = peer ? releasePeer : releaseOld;
+    if (exitFirst) {
+      releaseSource.open();
+      expect((await (peer ?? old)).status).toBe(peer ? 500 : 409);
+    }
+    await locker.query("ROLLBACK");
+    locked = false;
+    await targetReady.reached;
+    releaseSource.open();
+    expect((await (peer ?? old)).status).toBe(peer ? 500 : 409);
+    releaseTarget.open();
+    const result = await target;
+    expect(result.status).toBe(200);
+    const body = await result.json();
+    expect(body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 0, totalCost: 0 } });
+    expect(stub.calls).toHaveLength(4);
+  } finally {
+    releaseOld.open();
+    releasePeer.open();
+    releaseTarget.open();
+    if (locked) await locker.query("ROLLBACK");
+    locker.release();
+    await admin.end();
+    await Promise.allSettled([old, peer, target]);
+    restore();
+  }
+});
+
+test.each([false, true])("ISSUE-130: covered waiter reads a committed preview (verification before wait: %s)", async verifyFirst => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  stub.respondWith((res, body) => {
+    const result = matrix(body);
+    if (stub.calls.length === 3) result.sources_to_targets[0][0].time = null;
+    res.end(JSON.stringify(result));
+  });
+  const computed = barrier();
+  const publish = barrier();
+  const committed = barrier();
+  const acknowledge = barrier();
+  const joined = barrier();
+  const lookupReady = barrier();
+  const releaseLookup = barrier();
+  const read = travelTimes.readTravelTimes;
+  const lookup = vi.spyOn(travelTimes, "readTravelTimes").mockImplementation(async (...args) => {
+    await read(...args);
+    lookupReady.open();
+    if (verifyFirst) await releaseLookup.reached;
+  });
+  const restorePublish = __setPublishBarrier(async () => {
+    computed.open();
+    await publish.reached;
+  });
+  const retain = permits.retainForPublication;
+  const admission = vi.spyOn(permits, "retainForPublication").mockImplementation((...args) => {
+    const handle = retain(...args);
+    if (handle.routing) joined.open();
+    return handle;
+  });
+  const restoreCommit = __setTransactionCommitFaultHook(async client => {
+    if ((await client.query("SHOW transaction_read_only")).rows[0].transaction_read_only !== "off") return;
+    const real = client.query.bind(client);
+    // Withhold the acknowledgement only after PostgreSQL has committed the row.
+    client.query = (async (sql: string, values?: unknown[]) => {
+      const result = await real(sql, values);
+      if (sql === "COMMIT") {
+        committed.open();
+        await acknowledge.reached;
+      }
+      return result;
+    }) as typeof client.query;
+  });
+  const routing = preview();
+  let covered: Promise<Response> | undefined;
+  try {
+    await computed.reached;
+    covered = runPreview(() => publishPreview(pool, tripId, new PreviewDeadline(2500), owner.secret));
+    await lookupReady.reached;
+    if (!verifyFirst) await joined.reached;
+    publish.open();
+    await committed.reached;
+    const fresh = await preview();
+    expect(fresh.status).toBe(200);
+    const body = await fresh.json();
+    releaseLookup.open();
+    const waiting = await covered;
+    expect(waiting.status).toBe(200);
+    expect(await waiting.json()).toEqual(body);
+    expect(body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+    acknowledge.open();
+    expect(await (await routing).json()).toEqual(body);
+    restoreCommit();
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 0, totalCost: 0 } });
+    expect(stub.calls).toHaveLength(4);
+  } finally {
+    publish.open();
+    acknowledge.open();
+    releaseLookup.open();
+    restoreCommit();
+    await Promise.allSettled([routing, covered]);
+    admission.mockRestore();
+    lookup.mockRestore();
+    restorePublish();
+  }
+});
+
+test.each([false, true])("ISSUE-128: a third roster inherits the no-route from an overlapping lookup (middle publishing: %s)", async middlePublishing => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+  stub.respondWith((res, body) => {
+    const result = matrix(body);
+    if (stub.calls.length === 3) result.sources_to_targets[0][0].time = null;
+    res.end(JSON.stringify(result));
+  });
+  const routed = barrier();
+  const releaseRouting = barrier();
+  const lookupReady = barrier();
+  const releaseLookup = barrier();
+  const middleComputed = barrier();
+  const releaseMiddle = barrier();
+  let computations = 0;
+  const restore = __setPublishBarrier(async () => {
+    if (++computations === 1) {
+      routed.open();
+      await releaseRouting.reached;
+    } else if (computations === 2 && middlePublishing) {
+      middleComputed.open();
+      await releaseMiddle.reached;
+    }
+  });
+  const read = travelTimes.readTravelTimes;
+  const lookup = vi.spyOn(travelTimes, "readTravelTimes").mockImplementationOnce(async (...args) => {
+    await read(...args);
+    lookupReady.open();
+    await releaseLookup.reached;
+  });
+  const { version } = (await pool.query("SELECT version FROM trips WHERE id=$1", [tripId])).rows[0];
+  const old = preview();
+  let middle: Promise<Response> | undefined;
+  try {
+    await routed.reached;
+    expect((await editDriver(pool, tripId, firstDriver, randomUUID(), { baseVersion: version, seatCapacity: 2 })).httpStatus).toBe(200);
+    middle = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+    await lookupReady.reached;
+    releaseRouting.open();
+    expect((await old).status).toBe(409);
+    if (middlePublishing) {
+      releaseLookup.open();
+      await middleComputed.reached;
+    }
+    expect((await editDriver(pool, tripId, firstDriver, randomUUID(), { baseVersion: version + 1, seatCapacity: 3 })).httpStatus).toBe(200);
+    const newest = await publishPreview(pool, tripId, undefined, owner.secret);
+    expect(newest.body.baseVersion).toBe(version + 2);
+    expect(newest.body.optimal).toMatchObject({ matchedCount: 0, totalCost: 0 });
+    expect(newest.body.estimate?.legs.fetched).toBe(0);
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: newest.body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 0, totalCost: 0 } });
+    expect(stub.calls).toHaveLength(4);
+    releaseLookup.open();
+    releaseMiddle.open();
+    expect((await middle).status).toBe(409);
+  } finally {
+    releaseRouting.open();
+    releaseLookup.open();
+    releaseMiddle.open();
+    await Promise.allSettled([old, middle]);
+    lookup.mockRestore();
+    restore();
+  }
+});
+
+test.each([false, true])("ISSUE-130: a second cached caller reuses the durable winner (trip row locked: %s)", async locked => {
+  const owner = await bootstrapWorkspace(pool);
+  await pinToWorkspace(tripId, owner.id);
+  const warm = await sameCoordinatesTrip(owner.id);
+  expect((await publishPreview(pool, warm, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
+
+  const firstComputed = barrier();
+  const publishFirst = barrier();
+  let computations = 0;
+  const restore = __setPublishBarrier(async () => {
+    if (++computations !== 1) return;
+    firstComputed.open();
+    await publishFirst.reached;
+  });
+  const lookupReady = barrier();
+  const releaseLookup = barrier();
+  const read = travelTimes.readTravelTimes;
+  let reads = 0;
+  const lookup = vi.spyOn(travelTimes, "readTravelTimes").mockImplementation(async (...args) => {
+    await read(...args);
+    if (++reads !== 2) return;
+    lookupReady.open();
+    await releaseLookup.reached;
+  });
+  const admin = createPool(SETUP, 1);
+  const locker = await admin.connect();
+  const first = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+  let second: Promise<Response> | undefined;
+  try {
+    await firstComputed.reached;
+    second = runPreview(() => publishPreview(pool, tripId, undefined, owner.secret));
+    await lookupReady.reached;
+    publishFirst.open();
+    const winner = await first;
+    expect(winner.status).toBe(200);
+    const body = await winner.json();
+    if (locked) {
+      await locker.query("BEGIN");
+      await locker.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [tripId]);
+    }
+    // A fresh request can see the committed winner even with the row held.
+    expect(await (await preview()).json()).toEqual(body);
+    releaseLookup.open();
+    const reused = await second;
+    expect(reused.status).toBe(200);
+    expect(await reused.json()).toEqual(body);
+    expect(computations).toBe(1);
+    expect(stub.calls).toHaveLength(2); // only the separate trip that seeded the store
+    if (locked) await locker.query("ROLLBACK");
+    expect((await commitPreview(pool, tripId, randomUUID(), { previewId: body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, tripId)).toMatchObject({ totals: { matched: 1, totalCost: 231 } });
+  } finally {
+    publishFirst.open();
+    releaseLookup.open();
+    if (locked) await locker.query("ROLLBACK");
+    locker.release();
+    await admin.end();
+    await Promise.allSettled([first, second]);
+    lookup.mockRestore();
+    restore();
+  }
 });

@@ -11,13 +11,16 @@ export function createPool(connectionString: string, max = 5): Pool {
 
 const globals = globalThis as typeof globalThis & { groupRidePool?: Pool };
 
-export function appPool(): Pool {
-  if (globals.groupRidePool) return globals.groupRidePool;
+export function appDatabaseUrl(): string {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required.");
   const database = process.env.GROUPRIDE_USE_TEST_DATABASE === "1" ? testDatabase : demoDatabase;
   assertLocalTarget(url, database, appRole);
-  globals.groupRidePool = createPool(url);
+  return url;
+}
+
+export function appPool(): Pool {
+  globals.groupRidePool ??= createPool(appDatabaseUrl());
   return globals.groupRidePool;
 }
 

@@ -87,7 +87,7 @@ export async function runSetup(
       }
 
       await client.query(`
-        TRUNCATE assignments, match_previews, drivers, ride_requests, trips, mutation_receipts,
+        TRUNCATE assignments, match_previews, drivers, ride_requests, participant_location_history, trips, mutation_receipts,
           travel_times, saved_places, place_passes, workspace_sessions, workspaces, zone_costs, zones
       `);
       await seed(client);

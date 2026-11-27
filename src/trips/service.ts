@@ -317,6 +317,7 @@ export async function addDriver(
               tripId,
               guestLeaveHash,
               location: start,
+              version: locked.version + 1,
               maxDetourMinutes: body.maxDetourMinutes,
               name: body.name,
               seatCapacity: body.seatCapacity,
@@ -367,7 +368,7 @@ export async function addRequest(
       const request = await repo.insertRequest(
         client,
         isAddressAddRequest(body)
-          ? { tripId, guestLeaveHash, location: pickup, name: body.name }
+          ? { tripId, guestLeaveHash, location: pickup, name: body.name, version: locked.version + 1 }
           : { tripId, guestLeaveHash, zoneId: body.zoneId, name: body.name },
       );
       const version = await applyRosterChange(client, locked);
@@ -479,6 +480,12 @@ export async function editDriver(
           : undefined;
         const changed = await repo.updateDriverDetails(client, tripId, driverId, { ...details, location });
         const version = changed ? await applyRosterChange(client, trip) : trip.version;
+        if (changed && location) {
+          const previous = parseStoredSnapshot(driver.location);
+          if (previous.id !== location.id) {
+            await repo.rememberReplacedLocation(client, tripId, "driver", driverId, previous, version);
+          }
+        }
         return appliedRoster(key, 200, { mutationVersion: version });
       }
       if (driver.seat_capacity === body.seatCapacity) {
@@ -533,6 +540,12 @@ export async function editRequest(
           : undefined;
         const changed = await repo.updateRequestDetails(client, tripId, rideRequestId, { ...details, location });
         const version = changed ? await applyRosterChange(client, trip) : trip.version;
+        if (changed && location) {
+          const previous = parseStoredSnapshot(request.location);
+          if (previous.id !== location.id) {
+            await repo.rememberReplacedLocation(client, tripId, "passenger", rideRequestId, previous, version);
+          }
+        }
         return appliedRoster(key, 200, { mutationVersion: version });
       }
       if (!request.active) {

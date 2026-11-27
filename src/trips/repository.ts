@@ -3,6 +3,7 @@
 // business policy; the service does.
 
 import type { PoolClient } from "pg";
+import type { AddressPoint } from "../matching/address.ts";
 
 // Test-only barrier fired inside commitPlan AFTER the assignment DELETE and
 // BEFORE the INSERT loop (C-05). The W4 suite throws a terminal failure here to
@@ -18,6 +19,7 @@ export type LocationMode = "zone" | "address";
 export interface TripRow {
   id: string;
   invite_id: string;
+  workspace_id: string | null;
   name: string;
   destination_label: string;
   depart_at: string;
@@ -41,6 +43,7 @@ export interface DriverRow {
   active: boolean;
   location_mode: LocationMode;
   location: unknown;
+  location_history_since: number;
   max_detour_minutes: number | null;
 }
 
@@ -52,14 +55,15 @@ export interface RequestRow {
   active: boolean;
   location_mode: LocationMode;
   location: unknown;
+  location_history_since: number;
 }
 
-const TRIP_COLUMNS = `id, invite_id, name, destination_label, depart_at, status, version,
+const TRIP_COLUMNS = `id, invite_id, workspace_id, name, destination_label, depart_at, status, version,
             plan_version, committed_preview_id, algorithm_version, committed_at,
             location_mode, venue_location`;
 const DRIVER_COLUMNS = `id, trip_id, zone_id, name, seat_capacity, active,
-            location_mode, location, max_detour_minutes`;
-const REQUEST_COLUMNS = "id, trip_id, zone_id, name, active, location_mode, location";
+            location_mode, location, max_detour_minutes, location_history_since`;
+const REQUEST_COLUMNS = "id, trip_id, zone_id, name, active, location_mode, location, location_history_since";
 
 /** Lock the trip row FOR UPDATE; returns undefined when the trip does not exist. */
 export async function lockTrip(
@@ -137,12 +141,12 @@ export async function insertDriver(
   driver:
     (
     | { tripId: string; zoneId: string; name: string; seatCapacity: number }
-    | { tripId: string; location: unknown; maxDetourMinutes: number; name: string; seatCapacity: number }) & { guestLeaveHash?: string },
+    | { tripId: string; location: unknown; maxDetourMinutes: number; name: string; seatCapacity: number; version: number }) & { guestLeaveHash?: string },
 ): Promise<DriverRow> {
   const address = "location" in driver;
   const result = await client.query<DriverRow>(
-    `INSERT INTO drivers (trip_id, zone_id, name, seat_capacity, location_mode, location, max_detour_minutes, guest_leave_hash)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+    `INSERT INTO drivers (trip_id, zone_id, name, seat_capacity, location_mode, location, max_detour_minutes, guest_leave_hash, location_history_since)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
      RETURNING ${DRIVER_COLUMNS}`,
     [
       driver.tripId,
@@ -153,6 +157,7 @@ export async function insertDriver(
       address ? JSON.stringify(driver.location) : null,
       address ? driver.maxDetourMinutes : null,
       driver.guestLeaveHash,
+      address ? driver.version : 0,
     ],
   );
   return result.rows[0];
@@ -163,12 +168,12 @@ export async function insertRequest(
   request:
     (
     | { tripId: string; zoneId: string; name: string }
-    | { tripId: string; location: unknown; name: string }) & { guestLeaveHash?: string },
+    | { tripId: string; location: unknown; name: string; version: number }) & { guestLeaveHash?: string },
 ): Promise<RequestRow> {
   const address = "location" in request;
   const result = await client.query<RequestRow>(
-    `INSERT INTO ride_requests (trip_id, zone_id, name, location_mode, location, guest_leave_hash)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+    `INSERT INTO ride_requests (trip_id, zone_id, name, location_mode, location, guest_leave_hash, location_history_since)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
      RETURNING ${REQUEST_COLUMNS}`,
     [
       request.tripId,
@@ -177,6 +182,7 @@ export async function insertRequest(
       address ? "address" : "zone",
       address ? JSON.stringify(request.location) : null,
       request.guestLeaveHash,
+      address ? request.version : 0,
     ],
   );
   return result.rows[0];
@@ -253,6 +259,27 @@ export async function updateRequestDetails(
     [tripId, requestId, update.name, update.zoneId, JSON.stringify(update.location)],
   );
   return result.rowCount === 1;
+}
+
+export async function rememberReplacedLocation(
+  client: PoolClient, tripId: string, kind: "driver" | "passenger",
+  participantId: string, { id, providerRef, lon, lat }: AddressPoint, version: number,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO participant_location_history
+       (trip_id, participant_kind, participant_id, location_id, location, replaced_at_version)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
+    [tripId, kind, participantId, id, JSON.stringify({ id, providerRef, lon, lat }), version],
+  );
+}
+
+export async function listReplacedLocations(client: PoolClient, tripId: string, afterVersion: number) {
+  const result = await client.query<{ participant_kind: "driver" | "passenger"; participant_id: string; location: AddressPoint }>(
+    `SELECT participant_kind, participant_id, location FROM participant_location_history
+     WHERE trip_id = $1 AND replaced_at_version > $2
+     ORDER BY replaced_at_version`, [tripId, afterVersion],
+  );
+  return result.rows;
 }
 
 export async function findGuestRegistration(

@@ -4,7 +4,7 @@ import { requestProviderJson } from "../geoapify/transport.ts";
 import { processLimit, quota, retrySeconds, type GeoapifyRateLimit } from "../geoapify/quota.ts";
 export { GeoapifyRateLimit } from "../geoapify/quota.ts";
 import { TransientFailure } from "../contracts/errors.ts";
-import { RoutingResultError, RoutingUnavailable, validateCells, type RoutingAdapter } from "./adapter.ts";
+import { RoutingResultError, RoutingUnavailable, validateCells, type ObservedCell, type RoutingAdapter } from "./adapter.ts";
 import { matrixBatches, type MatrixBatch } from "./matrix.ts";
 
 const profile = { mode: "drive", traffic: "free_flow", type: "balanced", units: "metric", max_speed: 140 };
@@ -32,9 +32,15 @@ interface AdapterOptions {
   limit?: GeoapifyRateLimit;
 }
 
+const loopbackAdapters = new WeakSet<RoutingAdapter>();
+
+export function isLoopbackRoutingAdapter(adapter: RoutingAdapter): boolean {
+  return loopbackAdapters.has(adapter);
+}
+
 export function geoapifyRoutingAdapter(options: AdapterOptions = {}): RoutingAdapter {
   const limit = options.limit ?? processLimit;
-  return {
+  const adapter: RoutingAdapter = {
     provider: "geoapify",
     policyId: GEOAPIFY_POLICY_ID,
     async fetchLegs(pairs, request) {
@@ -61,14 +67,16 @@ export function geoapifyRoutingAdapter(options: AdapterOptions = {}): RoutingAda
             throw new RoutingUnavailable(undefined, response.status >= 500 ? retry : undefined);
           }
           const rows = decode(response.data, batch);
-          signal.throwIfAborted();
+          const observed: ObservedCell[] = [];
           const at = new Date().toISOString();
           rows.forEach((row, i) => row.forEach((seconds, j) => {
             for (const index of batch.indexes[i][j]) {
               cells[index] = seconds;
-              request.onObservation?.(index, seconds, at);
+              observed.push({ index, seconds });
             }
           }));
+          request.onBatch?.(observed, at);
+          signal.throwIfAborted();
         }
         return cells;
       } catch (error) {
@@ -78,4 +86,8 @@ export function geoapifyRoutingAdapter(options: AdapterOptions = {}): RoutingAda
       }
     },
   };
+  if (options.endpoint && ["127.0.0.1", "[::1]"].includes(new URL(options.endpoint).hostname)) {
+    loopbackAdapters.add(adapter);
+  }
+  return adapter;
 }

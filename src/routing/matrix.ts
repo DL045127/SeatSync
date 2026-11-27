@@ -1,5 +1,5 @@
 // Collect only requested directed cells. Different immutable location IDs at
-// the same coordinates share a cell within a rectangle.
+// the same coordinates share a cell across the entire request plan.
 import type { AddressPoint, DirectedPair } from "../matching/address.ts";
 
 type Coordinate = [number, number];
@@ -15,7 +15,7 @@ export interface MatrixBatch {
   indexes: number[][][];
 }
 
-function coordinateKey(point: AddressPoint): string {
+export function coordinateKey(point: AddressPoint): string {
   return JSON.stringify([point.lon, point.lat]);
 }
 
@@ -23,10 +23,12 @@ export function matrixBatches(pairs: readonly DirectedPair[], venueId: string): 
   const pickupRows = new Map<string, SourceRow>();
   const venueRows = new Map<string, SourceRow>();
   const targets = new Map<string, Coordinate>();
+  const venuePairs = new Set(pairs.filter(({ to }) => to.id === venueId)
+    .map(({ from, to }) => coordinateKey(from) + "\u0000" + coordinateKey(to)));
   pairs.forEach(({ from, to }, index) => {
-    const rows = to.id === venueId ? venueRows : pickupRows;
     const source = coordinateKey(from);
     const target = coordinateKey(to);
+    const rows = venuePairs.has(source + "\u0000" + target) ? venueRows : pickupRows;
     let row = rows.get(source);
     if (!row) {
       row = { location: [from.lon, from.lat], indexes: new Map() };

@@ -179,6 +179,16 @@ node --import tsx scripts/eval-reuse-db.ts
 
 The browser probe starts a local production app and a counting autocomplete provider. The database probe creates and drops its own schema in the test database. Both print JSON with the observed results. [Inputs, results and limitations](docs/EVIDENCE.md#reuse-0-measurement-checkpoint)
 
+### Verify directed driving-time reuse
+
+Use the offline fixture provider to try workspace reuse. In the same organizer browser, create two trips with the same fictional venue, driver start and pickup. Preview the first to record driving times. Preview the second to reuse those observations. Set `GROUPRIDE_TRAVEL_TIMES_MAX_AGE_DAYS=0` to disable the workspace store. The fixture default is 30 days. Live cross-trip Geoapify storage remains gated by the owner’s retention decision.
+
+Run `npm run test:concurrency -- travel-times geoapify address-reset-upgrade` with the designated test database free to check reusable estimates, roster edits, preview deadlines and bounded cleanup. It uses the offline fixtures and a counting loopback provider.
+
+On an existing experimental-branch database, stop the app and run `npm run db:migrate` before restarting. Migration 009 preserves saved plans and establishes the version from which each existing registration's address history can be verified. A later rematch may need a fresh estimate if the previous preview predates that history.
+
+With the designated PostgreSQL test database free, run `npm run test:concurrency -- travel-times geoapify` to check workspace scoping, reuse without a routing permit, expiry, reset fencing and provider interruption on loopback.
+
 ## Course deliverables
 
 GroupRide is a solo final project by Derick Lee. The [contribution record](docs/EVIDENCE.md#attribution-and-contributions--rr-3) documents student and AI-agent work.

@@ -37,6 +37,7 @@ export interface LegSource {
   adapter: () => RoutingAdapter;
   signal?: AbortSignal;
   settled?: Map<string, Leg>;
+  recordBatch?: (observations: ReadonlyArray<{ pair: DirectedPair; leg: Leg }>) => void;
 }
 
 export interface AddressPreviewComputation {
@@ -88,12 +89,15 @@ export async function computeAddressPreview(
     const cells = validateCells(await adapter.fetchLegs(toFetch, {
       venueId: roster.venue.id,
       signal: source.signal,
-      onObservation: (index, seconds, observedAt) => {
-        batchTimes.set(index, observedAt);
-        const { from, to } = toFetch[index];
-        source.settled?.set(legKey(from.id, to.id), {
-          from: from.id, to: to.id, seconds, observedAt, source: "provider",
+      onBatch: (observations, observedAt) => {
+        const batch = observations.map(({ index, seconds }) => {
+          batchTimes.set(index, observedAt);
+          const pair = toFetch[index];
+          const leg: Leg = { from: pair.from.id, to: pair.to.id, seconds, observedAt, source: "provider" };
+          source.settled?.set(legKey(leg.from, leg.to), leg);
+          return { pair, leg };
         });
+        source.recordBatch?.(batch);
       },
     }), toFetch.length);
     const observedAt = now().toISOString();

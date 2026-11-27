@@ -14,7 +14,7 @@ import { testDatabase } from "../../src/db/local-target.ts";
 import { __setTransactionCommitFaultHook } from "../../src/db/transaction.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 import { publishPreview } from "../../src/trips/preview.ts";
-import { addDriver, addRequest, createTrip as createTripWithoutWorkspace, getTripSnapshot } from "../../src/trips/service.ts";
+import { addDriver, addRequest, createTrip as createTripWithoutWorkspace, editRequest, getTripSnapshot } from "../../src/trips/service.ts";
 import { createTripWithWorkspace as createTrip } from "./helpers/workspace.ts";
 import {
   APP,
@@ -306,16 +306,16 @@ describe("L-02 upgrade of a W6 database", () => {
     expect((staleCommit.body as { error: { code: string } }).error.code).toBe("STALE_VERSION");
   });
 
-  test("a fresh install on an EMPTY database applies migrations 001 through 007, seeds the zones and creates one generation", async () => {
+  test("a fresh install on an EMPTY database applies migrations 001 through 009, seeds the zones and creates one generation", async () => {
     const empty = await quiesce();
     // Return the disposable test database to its pre-migration, empty state.
     await empty.query(`DROP TABLE assignments, match_previews, drivers, ride_requests, trips, mutation_receipts,
       zone_costs, zones, dataset_generation, schema_migrations,
-      workspaces, workspace_sessions, travel_times, saved_places, place_passes CASCADE`);
+      workspaces, workspace_sessions, travel_times, saved_places, place_passes, participant_location_history CASCADE`);
     expect((await empty.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public'")).rowCount).toBe(0);
     await runSetup(SETUP, testDatabase, "migrate"); // the same command the README tells a new installer to run
     const applied = (await empty.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name")).rows.map((r) => r.name);
-    expect(applied).toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql", "006_reuse.sql", "007_workspace_recovery_version.sql"]);
+    expect(applied).toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql", "006_reuse.sql", "007_workspace_recovery_version.sql", "008_participant_location_history.sql", "009_versioned_location_history.sql"]);
     expect((await empty.query("SELECT count(*)::int AS n FROM zones")).rows[0].n).toBe(4);
     expect((await empty.query("SELECT count(*)::int AS n FROM dataset_generation")).rows[0].n).toBe(1);
     // Reapplying is safe and keeps the generation.
@@ -404,7 +404,7 @@ describe("L-02 upgrade of a W6 database", () => {
       await reader.query("DELETE FROM drivers WHERE max_detour_minutes IS NULL");
       await runSetup(SETUP, testDatabase, "migrate");
       expect((await reader.query("SELECT name FROM schema_migrations ORDER BY name")).rows.map((r) => r.name))
-        .toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql", "006_reuse.sql", "007_workspace_recovery_version.sql"]);
+        .toEqual(["001_foundation.sql", "002_address_trips.sql", "003_address_driver_limit.sql", "004_trip_invites.sql", "005_guest_leave.sql", "006_reuse.sql", "007_workspace_recovery_version.sql", "008_participant_location_history.sql", "009_versioned_location_history.sql"]);
       expect((await reader.query("SELECT count(*)::int AS n FROM drivers")).rows[0].n).toBe(1); // the valid driver survived
       const p = await reopen();
       await expect(insertDriverVia(p, tripId, snapshot)).rejects.toMatchObject({ code: "23514" });
@@ -479,6 +479,46 @@ test("migration 006 preserves pre-workspace address plans, open previews and rec
   const replay = await createTripWithoutWorkspace(reopened, creationKey, createBody, undefined);
   expect(replay).toMatchObject({ replayed: true, body: remaining.body });
   expect((await commitPreview(reopened, openTrip, key(), { previewId: pending.body.previewId })).httpStatus).toBe(200);
+});
+
+test("ISSUE-129: upgrading old endpoint history requires a new verified preview", async () => {
+  const p = pool!;
+  const tripId = await createAddressTrip(p);
+  expect((await addDriver(p, tripId, key(), {
+    name: "Driver", seatCapacity: 1, maxDetourMinutes: 15,
+    startSelectionToken: await tokenFor(p, "Driver Start Delta", "driver_start", tripId),
+  })).httpStatus).toBe(201);
+  const registered = await addRequest(p, tripId, key(), {
+    name: "Rider", pickupSelectionToken: await tokenFor(p, "Pickup Alpha", "pickup", tripId),
+  });
+  expect(registered.httpStatus).toBe(201);
+  const rider = (registered.body as { id: string }).id;
+  const old = await publishPreview(p, tripId);
+  expect(old.body.optimal.totalCost).toBe(230);
+  expect((await editRequest(p, tripId, rider, key(), {
+    baseVersion: old.body.baseVersion,
+    details: { name: "Rider", pickupSelectionToken: await tokenFor(p, "Pickup Bravo", "pickup", tripId) },
+  })).httpStatus).toBe(200);
+  const admin = await quiesce();
+  await admin.query(`
+    ALTER TABLE drivers DROP COLUMN location_history_since;
+    ALTER TABLE ride_requests DROP COLUMN location_history_since;
+    ALTER TABLE participant_location_history
+      DROP CONSTRAINT participant_location_history_pkey,
+      ADD PRIMARY KEY (trip_id, participant_kind, participant_id, location_id);
+    GRANT UPDATE ON participant_location_history TO groupride_app;
+    DELETE FROM schema_migrations WHERE name = '009_versioned_location_history.sql';
+  `);
+  await runSetup(SETUP, testDatabase, "migrate");
+  const { rows } = await admin.query("SELECT location_history_since FROM ride_requests WHERE id=$1", [rider]);
+  expect(rows).toEqual([{ location_history_since: old.body.baseVersion + 1 }]);
+  const reopened = await reopen();
+  process.env.GROUPRIDE_ADDRESS_PROVIDER = "off";
+  await expect(publishPreview(reopened, tripId)).rejects.toMatchObject({ code: "ROUTING_UNAVAILABLE" });
+  process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+  const fresh = await publishPreview(reopened, tripId);
+  expect(fresh.body.optimal.totalCost).toBe(64);
+  expect(fresh.body.estimate?.legs).toMatchObject({ fetched: 3, reused: 0 });
 });
 
 test("trip ownership is written with its receipt and reset invalidates the session", async () => {

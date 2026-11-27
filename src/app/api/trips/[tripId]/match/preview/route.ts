@@ -1,6 +1,8 @@
 import { appPool, readEmptyBody, runPreview, rejectCrossSite } from "../../../../http.ts";
 import { publishPreview } from "../../../../../../trips/preview.ts";
 
+import { workspaceSecret } from "../../../../../../workspaces/service.ts";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -15,5 +17,5 @@ export async function POST(
   const bodyCheck = await readEmptyBody(request);
   if (bodyCheck instanceof Response) return bodyCheck;
   const { tripId } = await params;
-  return runPreview(() => publishPreview(appPool(), tripId));
+  return runPreview(() => publishPreview(appPool(), tripId, undefined, workspaceSecret(request)));
 }

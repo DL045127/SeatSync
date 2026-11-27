@@ -1,4 +1,4 @@
--- Test-only: undo migrations 002 through 007 so the upgrade test can re-apply the
+-- Test-only: undo migrations 002 through 009 so the upgrade test can re-apply the
 -- migrations over retained W6-shaped rows.
 -- Never run by the application.
 ALTER TABLE match_previews
@@ -13,6 +13,7 @@ ALTER TABLE ride_requests
   DROP CONSTRAINT request_mode_fields,
   DROP COLUMN location,
   DROP COLUMN location_mode,
+  DROP COLUMN location_history_since,
   DROP COLUMN guest_leave_hash;
 ALTER TABLE ride_requests ALTER COLUMN zone_id SET NOT NULL;
 
@@ -22,6 +23,7 @@ ALTER TABLE drivers
   DROP COLUMN max_detour_minutes,
   DROP COLUMN location,
   DROP COLUMN location_mode,
+  DROP COLUMN location_history_since,
   DROP COLUMN guest_leave_hash;
 ALTER TABLE drivers ALTER COLUMN zone_id SET NOT NULL;
 
@@ -33,7 +35,7 @@ ALTER TABLE trips
   DROP COLUMN invite_id,
   DROP COLUMN workspace_id;
 
-DROP TABLE travel_times, saved_places, place_passes, workspace_sessions, workspaces;
+DROP TABLE participant_location_history, travel_times, saved_places, place_passes, workspace_sessions, workspaces;
 
 DROP TABLE dataset_generation;
-DELETE FROM schema_migrations WHERE name IN ('002_address_trips.sql', '003_address_driver_limit.sql', '004_trip_invites.sql', '005_guest_leave.sql', '006_reuse.sql', '007_workspace_recovery_version.sql');
+DELETE FROM schema_migrations WHERE name IN ('002_address_trips.sql', '003_address_driver_limit.sql', '004_trip_invites.sql', '005_guest_leave.sql', '006_reuse.sql', '007_workspace_recovery_version.sql', '008_participant_location_history.sql', '009_versioned_location_history.sql');

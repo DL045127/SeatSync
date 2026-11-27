@@ -335,7 +335,7 @@ export function validateEvidence(
  * The earlier roster differs, so the participant mapping is not compared; the
  * candidate must instead be internally consistent (every leg joins two of its
  * own recorded endpoints in a legal role, with well-formed observations) and
- * must agree with the CURRENT trip about every location identity it names:
+ * must agree with the current trip or its verified address history about every location identity it names:
  * a location ID fixes its coordinates for the life of the trip, so any
  * disagreement, or a location this trip never had, means a wrong trip or
  * corruption. Returns the candidate's legs by key, or throws
@@ -345,37 +345,41 @@ export function validateCandidate(
   raw: unknown,
   roster: AddressRoster,
   expectedPolicy: string,
+  history?: {
+    baseVersion: number;
+    since: ReadonlyMap<string, number>;
+    /** All replacements after baseVersion, in ascending version order. */
+    replacements: readonly { participant_kind: "driver" | "passenger"; participant_id: string; location: AddressPoint }[];
+  },
 ): Map<string, Leg> {
   const evidence = parseEvidence(raw, expectedPolicy);
+  const drivers = new Map(roster.drivers.map(d => [d.id, d.location]));
+  const passengers = new Map(roster.passengers.map(p => [p.id, p.location]));
+  const replaced = new Map<string, AddressPoint>();
+  for (const row of history?.replacements ?? []) {
+    const key = `${row.participant_kind}:${row.participant_id}`;
+    if (!replaced.has(key)) replaced.set(key, row.location);
+  }
 
-  // Every location this trip has ever had, by immutable ID.
-  const known = new Map<string, AddressPoint>([[roster.venue.id, roster.venue]]);
-  for (const d of roster.drivers) known.set(d.location.id, d.location);
-  for (const p of roster.passengers) known.set(p.location.id, p.location);
-  const driverIds = new Map(roster.drivers.map((d) => [d.id, d.location.id]));
-  const passengerIds = new Map(roster.passengers.map((p) => [p.id, p.location.id]));
-
-  const agrees = (candidate: AddressPoint) => {
-    const current = known.get(candidate.id);
-    if (!current || !samePoint(current, candidate)) {
-      throw new AddressEvidenceError("Stored evidence names a location this trip does not have.");
+  const agrees = (kind: "driver" | "passenger", id: string, candidate: AddressPoint) => {
+    const current = (kind === "driver" ? drivers : passengers).get(id);
+    const key = `${kind}:${id}`;
+    const atVersion = replaced.get(key) ?? current;
+    if (history && (history.since.get(key) ?? Infinity) > history.baseVersion) {
+      throw new AddressEvidenceError("Cannot verify this participant at the stored preview version.");
+    }
+    if (!atVersion || !samePoint(atVersion, candidate)) {
+      throw new AddressEvidenceError("Stored evidence disagrees with the participant's location at that version.");
     }
   };
-  // A roster lists each participant once (ISSUE-073); a repeat means the row was never a valid preview.
-  if (new Set(evidence.drivers.map((d) => d.id)).size !== evidence.drivers.length
-    || new Set(evidence.passengers.map((p) => p.id)).size !== evidence.passengers.length) {
+  // A roster lists each participant once (ISSUE-073).
+  if (new Set(evidence.drivers.map(d => d.id)).size !== evidence.drivers.length
+    || new Set(evidence.passengers.map(p => p.id)).size !== evidence.passengers.length) {
     throw new AddressEvidenceError("Stored evidence lists a participant twice.");
   }
-  agrees(evidence.venue);
-  if (evidence.venue.id !== roster.venue.id) throw new AddressEvidenceError("Stored evidence has another venue.");
-  for (const d of evidence.drivers) {
-    agrees(d.location);
-    if (driverIds.get(d.id) !== d.location.id) throw new AddressEvidenceError("Stored evidence names a driver this trip does not have.");
-  }
-  for (const p of evidence.passengers) {
-    agrees(p.location);
-    if (passengerIds.get(p.id) !== p.location.id) throw new AddressEvidenceError("Stored evidence names a passenger this trip does not have.");
-  }
+  if (!samePoint(evidence.venue, roster.venue)) throw new AddressEvidenceError("Stored evidence has another venue.");
+  for (const d of evidence.drivers) agrees("driver", d.id, d.location);
+  for (const p of evidence.passengers) agrees("passenger", p.id, p.location);
 
   const start = new Map(evidence.drivers.map((d) => [d.location.id, d.location] as const));
   const pickup = new Map(evidence.passengers.map((p) => [p.location.id, p.location] as const));

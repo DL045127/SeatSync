@@ -4,7 +4,7 @@ import type { ProviderName } from "../locations/snapshot.ts";
 import type { RoutingAdapter } from "./adapter.ts";
 import { FIXTURE_POLICY_ID, fixtureRoutingAdapter } from "./fixture.ts";
 
-import { GEOAPIFY_POLICY_ID, geoapifyRoutingAdapter } from "./geoapify.ts";
+import { GEOAPIFY_POLICY_ID, geoapifyRoutingAdapter, isLoopbackRoutingAdapter } from "./geoapify.ts";
 
 export { validateCells, RoutingResultError, RoutingUnavailable } from "./adapter.ts";
 export type { RoutingAdapter } from "./adapter.ts";
@@ -30,4 +30,10 @@ export function routingAdapterFor(provider: ProviderName): RoutingAdapter {
   if (provider === "fixture") return fixtureRoutingAdapter();
   if (provider === "geoapify") return geoapifyRoutingAdapter();
   throw new Error(`No routing adapter is defined for provider ${provider} in this build.`);
+}
+
+/** Live Geoapify cross-trip reuse is disabled pending the owner's retention decision. */
+export function canShareTravelTimes(provider: ProviderName): boolean {
+  return provider === "fixture" || (process.env.GROUPRIDE_USE_TEST_DATABASE === "1" &&
+    adapterOverride?.provider === provider && isLoopbackRoutingAdapter(adapterOverride));
 }
