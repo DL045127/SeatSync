@@ -28,11 +28,10 @@ npm run test:matching
 docker compose config --quiet
 ```
 
-Continue in the same checkout with Docker running and the designated demo and test databases free:
+For a clean rehearsal with disposable demo and test data, continue with the commands below. To test invitations on an existing database and keep your trips, use the [manual guest walkthrough](#manually-test-guest-registration-and-departure).
 
 ```sh
 docker compose up -d --wait db
-npm run db:migrate
 npm run db:migrate
 npm run demo:reset
 npm run test:database
@@ -64,6 +63,24 @@ If you switch links before the registration confirmation appears, return to the 
 
 Keep the organizer dashboard URL private. The invite link shows trip details and accepts registrations from anyone holding it. The local server URL is reachable only on the host machine. To share across devices, serve GroupRide at a reachable HTTPS origin, configure `GROUPRIDE_TRUSTED_ORIGINS` for that origin, and open the organizer dashboard at that address before copying its invite link. The existing [trip data privacy issue](WORKPLAN.md#bugs-and-open-issues) remains relevant before using personal pickup data.
 
+### Manually test guest registration and departure
+
+With the dependencies and `.env` from setup in place, stop any running GroupRide server and start the app against the local demo database. These commands preserve existing trips.
+
+```sh
+docker compose up -d --wait db
+npm run db:migrate
+npm run dev
+```
+
+1. **Organizer:** Open `http://127.0.0.1:3000`. Create a **Zones** trip with a name, destination and departure. Keep the dashboard open and select **Copy invite link**.
+2. **Guests:** Open the shared invite in two other tabs. Join as driver Dana with one seat in `north`, and as passenger Alex in `east`. Save each guest’s **Private registration link**. The shared invite should still show **Join this trip** when reopened.
+3. **Organizer:** Bring the dashboard into view. Both names should appear automatically. Select **Preview**, then **Save plan**. Reopen each private link. Dana should see one assigned passenger and Alex should see a saved ride assignment.
+4. **Passenger:** On Alex’s private link, click **Leave trip** and confirm. Switch back to the organizer dashboard without reloading. Within a polling interval (about two seconds), Alex should disappear, Dana should remain, and the status should read **Needs a new plan**. Reopen Alex’s saved link to see **You left the trip**.
+5. **Driver:** Reopen Dana’s private link. It should now say **Awaiting a saved plan from the organizer**. Leave and confirm. The visible organizer dashboard should show **No active drivers** and **No active passengers**.
+
+If a departure reply is interrupted, reopen that guest’s private link in the same tab and select **Retry leaving**. The automated companion checks exercise delayed replies and retries against the designated test database: `npm run test:e2e -- invite-leave.spec.ts invite.spec.ts`.
+
 ### Run the invitation demo
 
 Use Node 24. With the database running, start a production app in one terminal. If a development server is already using port 3000, stop it first.
@@ -89,7 +106,7 @@ Address trips let an organizer search for a venue, driver start addresses and pa
 
 1. Follow the standard setup above. No copied secret and no provider credentials are needed.
 2. Upgrade an existing database with `npm run db:migrate` (add `-- test` for the test database). It is additive: saved zone trips, plans, previews and receipts are unchanged. `npm run demo:reset` and `npm run demo` also apply it first.
-3. Select the provider in the server environment, for example `GROUPRIDE_ADDRESS_PROVIDER=fixture npm run demo`, or put that line in `.env` (see `.env.example`). The default is `off`: zone trips work as before, and address search reports that it is disabled.
+3. Select the provider in the server environment, for example `GROUPRIDE_ADDRESS_PROVIDER=fixture npm run demo`, or set `GROUPRIDE_ADDRESS_PROVIDER=fixture` in `.env` (see `.env.example`). The default is `off`: zone trips work as before, and address search reports that it is disabled.
 4. In the browser choose **Trip type → Addresses**, search for `event hall`, and select a result with the keyboard (arrow keys, Enter). Then register a driver and a passenger on the trip page, preview, save and reload. Results labelled “street only” or “city” are shown but cannot be chosen.
 
 Browser writes are accepted only from the app's own loopback origin on its listening port (`http://127.0.0.1:<port>` or `http://localhost:<port>`); a foreign origin gets 403. If you reach the app through another host name or a port mapping, set `GROUPRIDE_TRUSTED_ORIGINS` to the full origin (see `.env.example`). Scripts and `curl` send no `Origin` header and are unaffected.
@@ -141,7 +158,7 @@ npm run demo
 
 To rehearse the three automated workflow scenarios against this running demo, run `npm run test:demo` in a second terminal. Chromium creates trips in the local demo database on port 3000 and exercises save/reload, rematch, and stale save. Stop the demo server when finished.
 
-Open the same `/trips/<id>` URL in a second browser profile to see the stale-commit flow: if one tab commits, the other tab's commit is rejected with a review/refresh prompt rather than silently overwriting the saved plan.
+To check concurrent saves, open the same organizer URL in two browser profiles and preview in both. Save in one profile. When the other dashboard refreshes, its old preview disappears. If its save reaches the server before that refresh, the server rejects the outdated preview and the page asks you to review the refreshed trip.
 
 ## Course deliverables
 
