@@ -391,6 +391,38 @@ The register contains 113 consecutive issue IDs. Recorded states are 97 closed, 
 
 ISSUE-108 spans two proposals. REUSE-1.2 addresses new shared pickups and RT1 covers conflicting legacy observations. ISSUE-109 and ISSUE-112 still require owner decisions. ISSUE-110 still requires measurements. ISSUE-111 and ISSUE-113 require evidence from the implemented workspace and preview routes. The guest workflow fixes through ISSUE-103 have recorded verification in the code shipped in `5c42e9b`. The environment reports for ISSUE-001 and ISSUE-003 remain scoped to the restricted workspace. This was a records audit. Application suites, environment access and provider calls were outside its scope.
 
+### REUSE-0 measurement checkpoint
+
+The student requested two offline measurements on starting revision `948b2fa` (`pivot-before-reuse` points to `0276859`). Work on `experiment/address-driving-time-reuse` is bounded to Chromium autocomplete counts and isolated PostgreSQL timings for the proposed lookup, batch upsert and places list. Stop before REUSE-1.1. Live retention, guest opt-in and independent student review are pending.
+
+**Reproduce.** Start the local Compose database, prepare `groupride_test` with `npm run db:migrate -- test`, and run `npm run build` with Node 24. Then run:
+
+```sh
+node --import tsx scripts/eval-reuse-search.ts
+node --import tsx scripts/eval-reuse-db.ts
+```
+
+**SC-14.** Chromium 159.0.8154.6 used the real venue picker, search endpoint, provider adapter and signed selection. A test-only preload in the production server process routed the synthetic autocomplete request to a counting HTTP server on loopback. It rejected any other HTTPS request through that adapter. Each trial opened a fresh picker and selected the fictional Example Hall at 42 Example Road. Between chunks, the probe waited at least 500 ms and confirmed the earlier request reached the provider.
+
+| Typing pattern | Completed selections | Provider requests | Requests per selection | Exact repeats within a selection |
+|---|---:|---:|---:|---:|
+| Type `Example Hall` without an inserted pause | 5 | 5 | 1 | 0 |
+| `Exam` → `Example` → `Example Hall` | 5 | 15 | 3 | 0 |
+| `Example Hall` → `Example Halls` → `Example Hall` | 5 | 15 | 3 | 5 |
+
+The extra requests in ordinary paused typing were distinct prefixes. Exact-query caching could have skipped one of three requests in each correction trial, with additional potential savings across repeated visits. These scripted trials cannot estimate real repeat frequency. Saved-place selection remains the planned way to skip a search for a known address. Use observed repeat behavior after that ships for the REUSE-4 caching decision. [Per-trial counts](../eval/reuse-0-search.json)
+
+**SC-13 database baseline.** PostgreSQL 18.7 in local Compose, Node 24.22.3, one already checked-out client and an isolated, normally logged schema on `groupride_test`. The harness dropped its schema at exit. The fixture had 16 workspaces, 17,120 directed observations under one policy, and 8,000 synthetic saved-place rows (500 per workspace). The lookup joined two arrays with `unnest` and filtered to a fresh workspace and policy. PostgreSQL used the proposed primary-key index in both plans. The smaller query used indexed probes and the larger query used an index to fetch the workspace slice before a hash join. The upsert updated existing rows with successively newer observations.
+
+| Roster | Batch size | Lookup p95 | Upsert p95 |
+|---|---:|---:|---:|
+| 2 drivers / 5 passengers | 17 directed pairs | 0.70 ms | 2.21 ms |
+| 20 drivers / 50 passengers | 1,070 directed pairs | 5.51 ms | 22.83 ms |
+
+The scoped saved-place list p95 was 0.91 ms for 100 venues and 2.94 ms for 500 venues and participants. Each operation used 10 warmup runs and 100 measured samples. Timing used `performance.now()` around the awaited SQL query on the client, including loopback transport and result decoding, plus the implicit commit for writes. p95 is the 95th value of 100 sorted samples. [Raw timings and lookup plans](../eval/reuse-0-db.json)
+
+This is a warm, serial SQL baseline with fully covered fresh lookups and updates of existing keys. Pool checkout, production transaction and dataset checks, purge, new-key insert cost, contention, three-plan pricing, integrated preview and picker timings remain outside this measurement. ISSUE-110 stays open for integrated SC-13 in REUSE-1 and REUSE-2. Lint, typecheck and the production build passed. Both probes ran offline with zero live Geoapify requests. Next bounded step is REUSE-1.1. Independent student review remains pending.
+
 ## Checkpoint D pilot preparation
 
 The student asked Codex to proceed from committed C (`2b50353`). This episode covers D1 attribution on suggestions, previews and saved estimates, and preparing the Geoapify search path against fictional provider responses. Live L-19 measurements depend on the owner’s L-18 project and credit confirmation. Student inspection is pending.

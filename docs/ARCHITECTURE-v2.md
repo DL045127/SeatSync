@@ -552,7 +552,7 @@ Two reviews shaped it. Revision 2 answered an independent agent review of revisi
 
 | Activity | Credits | Code |
 |---|---|---|
-| Address search | One autocomplete request per pause in typing (300 ms debounce), about 1 credit each. The typical count per address entry is unmeasured (SC-14). | `src/app/locations/LocationPicker.tsx`, `src/locations/geoapify.ts` |
+| Address search | One autocomplete request per pause in typing (300 ms debounce), about 1 credit each. Scripted selections dispatched one request with uninterrupted typing and three with two pauses. [SC-14 measurements](EVIDENCE.md#reuse-0-measurement-checkpoint) | `src/app/locations/LocationPicker.tsx`, `src/locations/geoapify.ts` |
 | Driving times | `max(s, t) × min(s, t, 10)` base credits per matrix request, plus distance surcharges. A cold 20×50 preview costs about 570. Reuse is trip-local and keyed by location ID. | `src/trips/address-preview.ts`, `src/routing/matrix.ts` |
 
 Every selection receives a new random location ID, so "the same place" can only be recognized by coordinates.
@@ -811,7 +811,7 @@ These rules reuse the pure modules `house-number.ts` and `us-locality.ts` on bot
 | Preview needing new times | One indexed read of at most 1,070 keys and pricing three plans before dispatch, plus a time-boxed write per batch | Provider calls measured at 929–973 ms live |
 | Owner picker | One list fetch per page, then filtering in the browser | Replaces 524–2,384 ms provider searches when a place is chosen |
 
-SC-13 measures these on the PostgreSQL test database before REUSE-1 passes.
+REUSE-0 established the [isolated PostgreSQL baseline](EVIDENCE.md#reuse-0-measurement-checkpoint). Integrated routing and pricing are measured in REUSE-1 and the saved-place picker in REUSE-2.
 
 | Scenario, same owner, within freshness | Today | With components A–D |
 |---|---:|---:|

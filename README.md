@@ -160,6 +160,17 @@ To rehearse the three automated workflow scenarios against this running demo, ru
 
 To check concurrent saves, open the same organizer URL in two browser profiles and preview in both. Save in one profile. When the other dashboard refreshes, its old preview disappears. If its save reaches the server before that refresh, the server rejects the outdated preview and the page asks you to review the refreshed trip.
 
+## Reproduce the offline reuse measurements
+
+Use Node 24, the local Compose database, the test URLs from `.env` and Playwright Chromium. Prepare the designated test database with `npm run db:migrate -- test`. Build the current app with `npm run build`.
+
+```sh
+node --import tsx scripts/eval-reuse-search.ts
+node --import tsx scripts/eval-reuse-db.ts
+```
+
+The browser probe starts a local production app and a counting autocomplete provider. The database probe creates and drops its own schema in the test database. Both print JSON with the observed results. [Inputs, results and limitations](docs/EVIDENCE.md#reuse-0-measurement-checkpoint)
+
 ## Course deliverables
 
 GroupRide is a solo final project by Derick Lee. The [contribution record](docs/EVIDENCE.md#attribution-and-contributions--rr-3) documents student and AI-agent work.

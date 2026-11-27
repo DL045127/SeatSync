@@ -1,0 +1,99 @@
+{
+  "node": "v24.22.3",
+  "chromium": "159.0.8154.6",
+  "pauseMs": 500,
+  "results": [
+    {
+      "pattern": "uninterrupted",
+      "dispatched": [
+        [
+          "Example Hall"
+        ],
+        [
+          "Example Hall"
+        ],
+        [
+          "Example Hall"
+        ],
+        [
+          "Example Hall"
+        ],
+        [
+          "Example Hall"
+        ]
+      ],
+      "selections": 5,
+      "providerRequests": 5,
+      "requestsPerSelection": 1,
+      "repeatsWithinSelections": 0
+    },
+    {
+      "pattern": "two pauses",
+      "dispatched": [
+        [
+          "Exam",
+          "Example",
+          "Example Hall"
+        ],
+        [
+          "Exam",
+          "Example",
+          "Example Hall"
+        ],
+        [
+          "Exam",
+          "Example",
+          "Example Hall"
+        ],
+        [
+          "Exam",
+          "Example",
+          "Example Hall"
+        ],
+        [
+          "Exam",
+          "Example",
+          "Example Hall"
+        ]
+      ],
+      "selections": 5,
+      "providerRequests": 15,
+      "requestsPerSelection": 3,
+      "repeatsWithinSelections": 0
+    },
+    {
+      "pattern": "correct and repeat",
+      "dispatched": [
+        [
+          "Example Hall",
+          "Example Halls",
+          "Example Hall"
+        ],
+        [
+          "Example Hall",
+          "Example Halls",
+          "Example Hall"
+        ],
+        [
+          "Example Hall",
+          "Example Halls",
+          "Example Hall"
+        ],
+        [
+          "Example Hall",
+          "Example Halls",
+          "Example Hall"
+        ],
+        [
+          "Example Hall",
+          "Example Halls",
+          "Example Hall"
+        ]
+      ],
+      "selections": 5,
+      "providerRequests": 15,
+      "requestsPerSelection": 3,
+      "repeatsWithinSelections": 5
+    }
+  ]
+}
