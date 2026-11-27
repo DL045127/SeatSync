@@ -46,6 +46,7 @@ async function main() {
   const app = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", "0"], {
     env: { ...process.env, NODE_OPTIONS: `--import ${JSON.stringify(preload)}`,
       DATABASE_URL: database, GROUPRIDE_USE_TEST_DATABASE: "1", GROUPRIDE_ADDRESS_PROVIDER: "geoapify",
+      GROUPRIDE_TRUSTED_ORIGINS: "", // Trust the probe server's ephemeral loopback port.
       GROUPRIDE_SELECTION_SECRET: Buffer.alloc(32, 7).toString("base64url"), GEOAPIFY_API_KEY: "reuse-probe",
       REUSE_PROBE_PORT: String((provider.address() as AddressInfo).port), NEXT_TELEMETRY_DISABLED: "1" },
     stdio: ["ignore", "pipe", "inherit"],

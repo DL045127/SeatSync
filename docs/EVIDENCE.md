@@ -419,9 +419,35 @@ The extra requests in ordinary paused typing were distinct prefixes. Exact-query
 | 2 drivers / 5 passengers | 17 directed pairs | 0.70 ms | 2.21 ms |
 | 20 drivers / 50 passengers | 1,070 directed pairs | 5.51 ms | 22.83 ms |
 
-The scoped saved-place list p95 was 0.91 ms for 100 venues and 2.94 ms for 500 venues and participants. Each operation used 10 warmup runs and 100 measured samples. Timing used `performance.now()` around the awaited SQL query on the client, including loopback transport and result decoding, plus the implicit commit for writes. p95 is the 95th value of 100 sorted samples. [Raw timings and lookup plans](../eval/reuse-0-db.json)
+The corrected scoped saved-place list p95 was 1.24 ms for 100 venues and 3.86 ms for 500 venues and participants. The retained driving-time samples are from the original run and the list samples are from the correction run. Each operation used 10 warmup runs and 100 measured samples. Timing used `performance.now()` around the awaited SQL query on the client, including loopback transport and result decoding, plus the implicit commit for writes. p95 is the 95th value of 100 sorted samples. [Raw timings and lookup plans](../eval/reuse-0-db.json)
 
 This is a warm, serial SQL baseline with fully covered fresh lookups and updates of existing keys. Pool checkout, production transaction and dataset checks, purge, new-key insert cost, contention, three-plan pricing, integrated preview and picker timings remain outside this measurement. ISSUE-110 stays open for integrated SC-13 in REUSE-1 and REUSE-2. Lint, typecheck and the production build passed. Both probes ran offline with zero live Geoapify requests. Next bounded step is REUSE-1.1. Independent student review remains pending.
+
+### Independent review of REUSE-0
+
+Reviewed commit `edc1424` against its parent `948b2fa`. The annotated pivot tag resolves to commit `dc2080a` (`0276859` is the tag object). Recomputed all six nearest-rank p95s from the 100 retained samples per operation, checked both recorded index plans, and recomputed the search counts from individual trials. Both probes exited successfully on the local test database with Node 24. The browser rerun used the existing production build and counted 5, 15 and 15 loopback requests for five completed selections per pattern. The run made zero live provider requests. Lint, typecheck and build results are from the implementation run.
+
+- **ISSUE-114 · Saved-place baseline.** Section 13.5 declares saved-place snapshots as `snapshotBodySchema`. Testing the SQL seed's object shape against that schema returned missing `providerRef`, `countryCode`, `address` and `attribution`, and unexpected `detail` and `provider`. The measured list query returns the JSON itself. Its timings include transport and decoding of these abbreviated rows. Seed representative valid snapshots, verify the returned shape outside the timed interval, then replace the two saved-list measurements. The driving-time rows and their p95s are independent. [Seed and query](../scripts/eval-reuse-db.ts) · [Snapshot contract](../src/locations/snapshot.ts)
+- **ISSUE-115 · Browser probe configuration.** The probe starts Next on a random port and inherits the caller's `GROUPRIDE_TRUSTED_ORIGINS`. For a same-origin search from an ephemeral port, the production origin guard accepted the default probe configuration and returned 403 with the documented explicit origin `http://127.0.0.1:3000`. The rejection precedes provider dispatch. Set the child process's trusted-origins setting to the empty value so its listening port determines the loopback origin, and repeat the browser probe with that explicit override in the parent. [Probe environment](../scripts/eval-reuse-search.ts) · [Origin guard](../src/app/api/http.ts)
+
+The review left the saved-place measurements pending under ISSUE-110/114. Integrated measurements remain assigned to REUSE-1 and REUSE-2. Neither finding changes the workspace migration. Student workspace-model confirmation remains tracked by ISSUE-111.
+
+### REUSE-0 benchmark corrections
+
+The student asked to verify and correct ISSUE-114 and ISSUE-115 on the experimental branch starting at `edc1424`. The task is to remeasure both saved-place list workloads using valid snapshots and rerun the Chromium probe with the documented fixed origin in the parent environment. Student inspection is pending.
+
+Both findings were confirmed. The original SQL seeds omit four required fields and contain two fields the strict schema rejects. The original child configuration inherits a trusted origin whose port differs from the listener, so the guard can reject its own browser request before dispatch.
+
+- **ISSUE-114.** The revised SQL seeds include a provider reference, country code, full structured fictional street address and source attribution. A separate untimed query validates every returned snapshot with `snapshotBodySchema` for each list workload. The run validated 100 and 500 snapshots, totaling 27,585 and 138,121 bytes of reserialized snapshot JSON, respectively. With 10 warmups and 100 timed samples per list, p95 was **1.24 ms** and **3.86 ms**. These replace the abbreviated-payload timings. The evidence retains the original driving-time samples and lookup plans. [Corrected list samples](../eval/reuse-0-db.json)
+- **ISSUE-115.** The probe overrides trusted origins only in its child server. Ran `GROUPRIDE_TRUSTED_ORIGINS=http://127.0.0.1:3000 node --import tsx scripts/eval-reuse-search.ts` against the existing production build. With Next on an ephemeral port, Chromium still completed five selections per pattern and the provider received 5, 15 and 15 requests. The per-trial output matched the retained default-configuration result exactly. No live requests were made. [Per-trial counts](../eval/reuse-0-search.json)
+
+The corrected probe scripts passed lint and typecheck. ISSUE-114 and ISSUE-115 are closed on the verified working diff over `edc1424`. ISSUE-110 remains open for integrated preview and picker timings. REUSE-1.1 is the next implementation step.
+
+### Independent verification of the REUSE-0 corrections
+
+Reviewed the uncommitted corrections over `edc1424`. The reviewed script blobs are `14333b970f27` (database) and `d87c4862ef03` (browser). Recomputing the nearest-rank p95 from each set of 100 retained list samples gave 1.24 ms for 100 venues and 3.86 ms for 500 places. Only the `places` section of the retained JSON changed from `edc1424`. An independent PostgreSQL run validated both result sets before timing, returned the recorded snapshot sizes of 27,585 and 138,121 bytes, and measured 1.18 ms and 3.96 ms respectively.
+
+With the parent trusting `http://127.0.0.1:3000`, the Chromium rerun against the existing production build and counting loopback provider produced the same per-trial JSON as the retained run. Five selections per pattern used 5, 15 and 15 provider requests. Lint and typecheck passed. The review used zero live Geoapify requests. Both findings are verified closed. ISSUE-110 remains open for the integrated measurements.
 
 ## Checkpoint D pilot preparation
 

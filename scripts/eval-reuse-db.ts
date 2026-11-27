@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { assertLocalTarget, setupRole, testDatabase } from "../src/db/local-target.ts";
 import { createPool } from "../src/db/pool.ts";
+import { snapshotBodySchema } from "../src/locations/snapshot.ts";
 
 const warmup = 10;
 const samples = 100;
@@ -81,8 +82,14 @@ async function main() {
       INSERT INTO saved_places (workspace_id, provider, kind, point_key, snapshot, last_used_at)
       SELECT id, 'fixture', CASE WHEN n % 5 = 0 THEN 'venue' ELSE 'participant' END,
         jsonb_build_array(-90, 30 + n / 10000.0)::text,
-        jsonb_build_object('label', 'Example Place ' || n, 'detail', n || ' Example Road',
-          'lon', -90, 'lat', 30 + n / 10000.0, 'provider', 'fixture', 'precision', 'building'),
+        jsonb_build_object(
+          'providerRef', 'fixture-example-' || n,
+          'countryCode', 'US',
+          'label', 'Example Place ' || n,
+          'address', jsonb_build_object('street', n || ' Example Road',
+            'city', 'Example City', 'state', 'TX', 'postcode', '78701'),
+          'lon', -90, 'lat', 30 + n / 10000.0,
+          'precision', 'building', 'attribution', 'GroupRide fictional fixture catalog'),
         now() - n * interval '1 minute'
       FROM workspaces CROSS JOIN generate_series(1,$1) AS n
     `, [placesPerWorkspace]);
@@ -120,7 +127,14 @@ async function main() {
     const places = [];
     for (const kinds of [["venue"], ["venue", "participant"]]) {
       const expected = kinds.length === 1 ? 100 : 500;
+      const validated = await client.query<{ snapshot: unknown }>(placesSql, [owners[0].id, kinds]);
+      assert.equal(validated.rowCount, expected);
+      for (const { snapshot } of validated.rows) snapshotBodySchema.parse(snapshot);
+      const snapshotJsonBytes = validated.rows.reduce(
+        (bytes, { snapshot }) => bytes + Buffer.byteLength(JSON.stringify(snapshot)), 0,
+      );
       places.push({ kinds, rows: expected,
+        validatedSnapshots: validated.rows.length, snapshotJsonBytes,
         ...await measure(() => client.query(placesSql, [owners[0].id, kinds]),
           result => assert.equal(result.rowCount, expected)) });
     }
