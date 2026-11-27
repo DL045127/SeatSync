@@ -2,6 +2,8 @@
 
 **Design · November 2026. Checkpoints A (offline workflow) and B (independent verification, leg reuse and recovery) are implemented, as recorded in sections 9 and 10; C and D are still proposals.** The next product milestone lets an organizer select a shared venue, driver starting addresses, and passenger pickup addresses anywhere the U.S. provider can resolve and route them. The proposed first implementation uses an offline catalog of fictional places. Austin is the first proposed live demonstration. The [released architecture](ARCHITECTURE.md) and its [W6 verification](EVIDENCE.md#w6-dense-benchmark-corrections) describe the zone-based application. Sections 1–8 describe the full design; section 9 records exactly what checkpoint A built and where it differs. Everything not listed there is still a proposal.
 
+[Section 12](#12-proposed-route-based-pickup-cost) proposes replacing per-pair address costs with route-based pickup costs. It is not implemented.
+
 ## 1. Product and boundaries
 
 An organizer creates an address-based trip by searching for a venue, confirming its address, and entering the departure time with an explicit UTC offset. For each driver, the organizer confirms a starting address, seats offered, and maximum extra driving time for an individual pickup. For each passenger, the organizer confirms a pickup address. The preview shows named pairings, unassigned passengers, and estimated extra driving minutes. Saving and reloading reproduces the reviewed assignments and estimates. The same workflow applies in another U.S. city without importing a city catalog.
@@ -342,3 +344,554 @@ If there is no supported street match, an exact structured venue name such as `F
 Search and matrix calls use a shared Node HTTPS transport to keep provider URLs out of Next.js fetch spans, fetch metrics and full-URL development logs. Both calls use the same process-wide rate limiter. The search route starts one five-second monotonic deadline before reading the body. Pool acquisition, SQL, signing-key loading, quota waits, and the entire provider response consume that budget. Caller cancellation or expiry interrupts waiting, including a stalled body read. [Transport](../src/geoapify/transport.ts) · [Quota handling](../src/geoapify/quota.ts) · [Search route](../src/app/api/locations/search/route.ts)
 
 The pilot begins with one driver and one passenger in Austin. Seattle is the proposed second region, using City Hall as the starting point, Central Library as the pickup and the Museum of Pop Culture as the venue. Three single-shot autocomplete searches and a cold three-cell matrix per region give a planning estimate of 12 base credits across the two small trips. Extra searches, retries, distance surcharges and any larger group run require budget headroom. Dashboard usage supplies the actual cost. [Austin scenario](#austin-live-demo-west-campus-apartments-to-one-event) · [City Hall](https://seattle.gov/council/meetings/visiting-city-hall) · [Central Library](https://www.spl.org/hours-and-locations/central-library) · [Museum of Pop Culture](https://www.mopop.org/plan-your-visit)
+
+## 12. Proposed: route-based pickup cost
+
+**Status: proposal, not implemented.** The student requested this change on 2026-11-26. Revision 2 incorporates the [route-cost bounds review](EVIDENCE.md#technical-review-of-route-cost-bounds) and the student's credit constraint. No single preview should consume a heavy share of the 3,000 daily credits. The design applies only to address trips; zone trips keep `mincostflow-v1` unchanged. If accepted, this section replaces the following address rules:
+
+- the per-pair detour limit in [section 1](#1-product-and-boundaries);
+- the "sum of estimated individual pickup detours" objective in [section 5](#5-driving-estimates-and-matching);
+- the deferral of multi-stop ordering.
+
+### 12.1 Problem
+
+Today each driver–passenger pair costs `D→P + P→V − D→V`, and a plan's cost is the sum over its pairs. Passengers who ride together therefore pay independent detours:
+
+- **Same address.** Alex and Casey share coordinates. Dana picks both up with one 4-minute stop, but the plan is charged 8. If another driver can take Casey for 3 minutes, the matcher splits them at 7.
+- **Nearby addresses.** Alex and Casey live a minute apart and far from Dana. Dana's long trip out is charged twice.
+- **Zig-zag.** Two pickups on opposite sides of Dana's direct route each look cheap alone, but the route through both is long. The sum underestimates the cost and can hide a breach of Dana's limit.
+
+The per-pair sum can err in either direction, and changing only the displayed total would leave the matching decision unchanged.
+
+### 12.2 Cost model and limits
+
+A **stop** is the set of active passengers whose validated coordinates are exactly equal, using the `identical_endpoint` equality. For driver D and a non-empty set S of distinct stops:
+
+```text
+routeDetour(D, S) = max(0, round( min over orders s1..sk of
+                      [ D→s1 + s1→s2 + … + sk→V ]  −  D→V ))
+```
+
+- Use provider-precision seconds and round only the final difference, half-up, under the section 5 rule. ISSUE-104 must be fixed first. A clamped negative is counted as before.
+- An order that uses a confirmed no-route leg is invalid.
+- Held–Karp evaluates every order of up to 8 stops exactly. Equal orders are broken by ascending stop key.
+- A single stop costs exactly what it costs today.
+
+**Feasible route.** D may serve S when:
+
+1. S's passengers fit D's seats;
+2. **each pickup fits D's limit on its own** (today's single-stop rule);
+3. **the whole route fits D's limit**: `routeDetour(D, S) ≤ limit`.
+
+The driver-facing wording is: "Each pickup must fit your limit on its own, and your complete pickup route must fit it too."
+
+Rule 2 is a deliberate conservative product choice, pending the student's decision under ISSUE-105. Independently observed directed times can make a route through A and B measure 4 extra minutes while A alone measures 6. The rule rejects that route, so it can leave someone unassigned even though the two-stop itinerary would fit. In exchange, the min-cost-flow value K\* over single-stop eligibility remains a valid upper bound on coverage. The revision-1 rule requiring every subset to pass is withdrawn.
+
+On the same canonical matrix (12.3), rules 2–3 are at least as strict as the per-pair rule, so coverage can only stay the same or fall. Compared with the application today it can move in either direction, because canonical observations can change single-stop eligibility (RT-04). Existing registrations keep their stored minutes under the new meaning, and the change must be visible:
+
+- the registration and edit forms use the wording above;
+- each driver card on an existing trip shows a one-time notice that the limit now covers the whole route.
+
+Saved plans keep their original meaning. Passenger ride time and dwell time remain outside the model.
+
+**Objective.** Maximize matched passengers, then minimize `Σ_D routeDetour(D, S_D)`. Seats are counted per passenger.
+
+### 12.3 Canonical driving times
+
+Legs are keyed today by location ID, so co-located passengers can hold conflicting estimates. Choosing by "smallest active location ID" would let one withdrawal change everyone else's estimate. The proposal instead keys one authoritative observation per coordinate pair:
+
+- **Key:** (routing policy, from coordinates, to coordinates) within the trip, as a new evidence schema.
+- **Conflict rule:** the earliest `observedAt` wins, and a confirmed no-route counts as an observation. A conflict at equal timestamps cannot come from one deduplicated batch, so it is treated as corrupt evidence and takes the cold-rebuild path.
+- **Reuse:** a new participant at known coordinates inherits the stored observation.
+- **Retention:** an observation stays while any active participant references those coordinates in that role.
+- **Legacy:** per-ID evidence is merged once, under the same rule.
+- **Build order:** the canonical matrix is built before any solve phase, so coverage and cost use identical eligibility.
+
+### 12.4 Credit budget and pricing modes
+
+Credits are the binding constraint. A rectangle request costs `max(s, t) × min(s, t, 10)` base credits, so cells are cheapest in blocks with both sides of at least 10. Every preview runs in three steps:
+
+1. **Round 1 (unchanged).** Fetch the driver→pickup, pickup→venue and driver→venue legs. These give single-stop eligibility, K\* and a starting plan.
+2. **Predict.** Before any further dispatch, compute the exact requests and credits each pricing mode would send, after reuse, deduplication and same-coordinate collapse.
+3. **Choose a mode** against the owner-set **route-pricing allowance** (proposed default 400 base credits per preview, ISSUE-107):
+   - **Full** when its prediction fits. Fetch every inter-stop leg that could be needed, meaning both stops are individually eligible for one driver with at least two seats. Optimize on road times as described in 12.5.
+   - **Economy** otherwise. Choose groupings with a zero-credit approximation, then fetch only the legs inside the chosen cars (12.6).
+   - **Neither fits** (possible only with an allowance below 400): fail before dispatch with zero credits spent, and report the credits required.
+
+**Batching.** For full mode, the planner must deliberately request square blocks that include the diagonal and then discard the diagonal cells. The current planner groups sources by identical target sets, and because each pickup excludes itself, 2,450 off-diagonal pairs become 50 requests of 1×49 costing 2,450 credits. For economy mode, the planner sends one k×k request per car with k ≥ 2 distinct stops, costing k² credits. Generated request dimensions and predicted credits are acceptance tests (RT-11) before any live trial.
+
+| Roster (distinct coordinates, cold) | Round 1 | Full inter-stop | Economy inter-stop | Mode chosen at 400 |
+|---|---:|---:|---:|---|
+| 3 drivers, 6 pickups | 3×6 → 18, venue 9 → **27** | one 6×6 → 36 | ≤ 36 | Full, **63 total (2%)** |
+| 6 drivers, 15 pickups | 6×15 → 90, venue 21 → **111** | one 15×15 → 150 | e.g. cars of 3,3,3,2,2,2 → 39 | Full, **261 total (9%)** |
+| 20 drivers, 50 pickups | **570** | four 25×25 → 1,000 | worst case six cars of 8 plus one of 2 → 388; ten cars of 5 → 250 | Economy, **820–958 total (27–32%)** |
+
+- At maximum size, round 1 dominates. It is the existing cost of a cold maximum preview (19%) and is not new.
+- Rematches reuse stored legs and usually cost little or nothing.
+- Surcharges for long distances and retries are extra.
+- Reducing round 1 itself, for example by geographic pruning with a provable lower bound on driving time, is a separate proposal. It would need evidence that provider times never beat straight-line distance at the pinned 140 km/h.
+
+### 12.5 Full mode: solver
+
+Full mode has every leg the problem can use, so optimality claims are meaningful. The following rules apply throughout:
+
+- **Incumbent.** Keep the best validated feasible plan, compared by (coverage, cost), across every stage below. A stage that runs out of budget never discards it. For example, if Phase A proves 18 is the maximum and Phase B stops early, the 18-passenger incumbent survives.
+- **Budgets.** Deterministic budgets count work: candidate sets examined, MILP nodes and local-search iterations, not just columns emitted.
+- **Deadline.** Enumeration, repair and solving all share the preview deadline, which only aborts. An abort returns a retryable failure that says changing the roster helps, and publishes nothing.
+
+1. **Feasible start.** Take the min-cost flow plan on single-stop costs and price its routes exactly. Repair any car that breaks rule 3. Try removing each of its stops in turn, re-seat the removed stop where it is cheapest and still feasible (or leave it unassigned), and keep the outcome best by (coverage, cost), breaking ties by stop key. Also run greedy insertion. Keep the better of the two.
+2. **Enumerate.** For each driver, list every subset of its individually eligible stops up to its capacity, and price each feasible one. Enumeration is complete only if it finishes within the work budget.
+3. **Exact solve** (only when enumeration completed). HiGHS MILP in a worker thread:
+   - Binary `z[D,S]` selects at most one set per driver. Integer `x[D,s]` counts seats.
+   - Constraints:
+     - `Σ_S z[D,S] ≤ 1`;
+     - `Σ_{S∋s} z ≤ x[D,s] ≤ min(n_s, cap_D) · Σ_{S∋s} z`;
+     - `Σ_s x[D,s] ≤ cap_D`;
+     - `Σ_D x[D,s] ≤ n_s`.
+   - Phase A maximizes `Σx`. Phase B minimizes cost with `Σx = N`, where N is Phase A's optimum or, if A stopped early, the incumbent's coverage.
+   - Settings: zero relative and absolute gaps, one thread, canonical input order.
+   - Accept a proof only when the solver reports optimal status, the objective recomputed from the integer solution matches, and the bound agrees.
+4. **Improve.** Run local search from the incumbent (relocate, swap, seat an unassigned passenger), re-pricing touched routes exactly.
+5. **Expand and validate.** Seat each stop's passengers in ascending ID order. Derive stops only from positive seat counts. Recompute every route from the canonical matrix before publishing.
+
+The pinned HiGHS version (WebAssembly build, source and license recorded at prototype time) is part of the algorithm version, so equal optima from different versions never silently replace a stored winner.
+
+### 12.6 Economy mode: price the chosen routes
+
+Economy mode starts from the student's proposal: take an arrangement from the existing solver, then price each driver's actual route. Two additions keep it correct and useful:
+
+1. **Start.** Run the existing min-cost flow on single-stop costs. This reaches K\* passengers.
+2. **Regroup with a free approximation.** Estimate each inter-stop time as `r × great-circle distance`. Here r is the median ratio of road seconds to great-circle kilometres over this trip's round-1 legs, so it is deterministic and costs no credits. Stored road legs replace the estimate wherever they exist. Deterministic local search relocates and swaps stops to reduce approximate route cost without losing coverage.
+   - Without this step the flow plan keeps the per-pair grouping: in RT-01 it would split A and B (10 minutes) instead of pairing them (7). Approximations only choose groupings; they are never displayed, saved or used for a limit check.
+3. **Price.** Fetch each chosen car's k×k block within the predicted allowance. Compute the exact best order and route cost from road times.
+4. **Repair.** If a priced route breaks rule 3, try removing each of its stops in turn. Re-seat the removed stop only where every leg it needs is already stored: an empty driver, whose single-stop legs come from round 1, or a car whose legs to it are known. Otherwise leave it unassigned. Keep the outcome best by (coverage, cost), breaking ties by stop key. Keep the best validated plan. Repair never fetches beyond the predicted allowance.
+
+Economy plans report exact road-time costs for the routes they chose, and coverage is checked against K\*. They make no claim of being cheapest, because the cost of unchosen groupings was never observed.
+
+### 12.7 What each plan claims
+
+Every published plan states "N passengers placed · E min estimated extra driving in total", after the 12.8 validation. Proof of maximum coverage and proof of minimum cost are tracked separately. Cost claims are always "for N passengers", because a plan placing more passengers could cost more.
+
+| Label | Shown when | Wording |
+|---|---|---|
+| Coverage proven | Phase A optimal, or N = K\* | "Most passengers possible" |
+| Coverage bound | otherwise | "At most M can be placed", where M is the smaller of K\* and Phase A's bound |
+| Cost proven | full mode, complete enumeration, Phase B optimal at N | "Cheapest arrangement for N passengers" |
+| Cost bounded | full mode, complete enumeration, Phase B stopped with lower bound L > 0 | "Within X min of the cheapest arrangement for N passengers", with X = ⌈(E − L)/60⌉ |
+| Economy note | economy mode | "Pickup groups were chosen using approximate distances between pickups; times shown are road estimates for these routes" |
+
+- L comes only from a solve over the complete route enumeration and is rounded conservatively. A bound from a partial route list is never shown, because an omitted route could be cheaper.
+- When no cost label applies, the plan shows N and E with no optimality wording.
+- Every claim concerns the stored estimates. Traffic, dwell time and routing error are outside the model. Labels are published with the immutable preview, saved with the plan and shown unchanged after reload.
+
+### 12.8 Result, storage and compatibility
+
+- **Result version** (proposed `address-route-v1`):
+  - per driver: ordered stops with passenger IDs, and the route detour;
+  - unassigned IDs, N and E;
+  - the coverage and cost labels with their bounds;
+  - mode, predicted and actual credits, and solver identity and budgets.
+
+  Routes own their cost; passengers have none.
+- **Validation** of the preview, the stored result and the commit dispatches on result version. For route results it checks:
+  - seats and rules 1–3;
+  - that the cost of the **stored pickup sequence**, recomputed leg by leg, equals the stored route cost *and* the best-order cost over the same legs. This catches a wrong displayed order carrying a correct minimum.
+  - that E equals the sum of route costs.
+
+  Older results keep today's check, where the total equals the sum of assignment costs.
+- **Storage.** A per-driver route record holds the cost and order. Assignment rows gain a stop position and no cost, with `pickup_cost` nullable under a check tied to the result version. The saved-plan record holds N, E and the labels. Reload must sum route costs; the current `pickup_cost` sum in `src/trips/service.ts` would double a shared stop.
+- **Two legacy cases:**
+  1. *Replay of a save that already committed* returns its original receipt and plan unchanged.
+  2. *An old preview that was never saved* is rejected at commit by the existing guard as `ALGORITHM_CHANGED` (`src/trips/commit.ts`). The organizer must preview again, so no new plan can be created under the old per-pickup limit after rollout.
+- Zone trips are untouched.
+
+### 12.9 Independent fixtures
+
+Times are fictional minutes; expectations come from hand enumeration. The test oracle is independent of HiGHS, Held–Karp and the approximation:
+
+- It enumerates every passenger→driver-or-unassigned assignment for up to 7 passengers and 4 drivers.
+- It prices routes by brute-force permutation and applies rules 1–3.
+- It returns **the minimum cost at each achievable passenger count.**
+
+Tests compare coverage with the oracle's maximum. They compare cost, and any reported gap, with the oracle's entry for the N actually placed. The suite retains 100 seeded cases with shared coordinates, asymmetric legs and no-route legs.
+
+| ID | Setup | Expected | Defects it detects |
+|---|---|---|---|
+| RT-01 Nearby riders share | D1: 2 seats, limit 15. D2: 1 seat, limit 15. D1→V 20, D1→A 12, D1→B 13, D2→V 20, D2→A 15, D2→B 10, A→V 14, B→V 14, A↔B 1. | D1 takes A then B, 7 min (420 s). The splits cost 6 + 4 = 10 and 7 + 9 = 16. | Per-pair or per-stop costing, which picks the 10-minute split. |
+| RT-02 Zig-zag | D1: 2 seats, limit 10. D2: 1 seat, limit 10. D1→V 20, D1→A 12, D1→B 12, A→V 13, B→V 13, A↔B 15, D2→V 20, D2→A 20, D2→B 14. | D1{A,B} = 20, over the limit. D1{A} + D2{B} = 5 + 7 = 12 min (720 s), 2 placed. | Per-pair costing, which picks D1{A,B} at 10. A limit applied per stop only. |
+| RT-03 Route limit lowers coverage | RT-02 without D2. | 1 placed, 300 s. Coverage proven. K\* = 2 is not achievable. | A coverage claim taken from K\* alone. |
+| RT-04 Conflicting estimates, then withdrawal | Dana: 2 seats, limit 5. Alex and Casey share coordinates. Legacy estimates give 4 min (earlier, Alex's smaller ID) and 6 min (later). Alex withdraws. | Before: one stop, 2 placed, 240 s. After: Casey, 1 placed, 240 s. | "Latest wins". "Smallest active ID". Per-ID legs. |
+| RT-05 Shared stop must split | One 2-passenger stop. Two 1-seat drivers with detours 4 and 3. | 2 placed, 420 s. | Keeping a stop together. Charging a stop once across all drivers. |
+| RT-06 Save and reload | RT-01 through preview, Save and reload. | Each view shows D1: A → B, 7 min, 2 seats, total 420 s, and the same labels. | Cost doubling on reload. A lost order or lost labels. |
+| RT-07 Labels and incumbents | Rosters run with test-only work budgets that stop Phase B, and separately stop enumeration. | Coverage matches the oracle maximum when proven. E ≥ oracle[N]. A bounded gap satisfies E − 60·X ≤ oracle[N]. No cost label after incomplete enumeration. Phase A's incumbent is kept when B stops. Identical output on repeat. | Overclaimed proofs. A lost incumbent. Nondeterminism. |
+| RT-08 Legacy | An older saved address plan with a same-key replay. An older unsaved preview committed after rollout. A zone trip. | The replay returns the original plan. The unsaved preview gets `ALGORITHM_CHANGED`. The zone trip is unchanged. | Version dispatch errors. Old-limit plans created after rollout. |
+| RT-09 Economy regroups | RT-01 forced into economy mode, with coordinates placing A and B close together. | The approximation pairs A and B. One 2×2 request (4 credits). Priced at 7 min. | The flow-only arrangement (10 min). Fetching beyond the chosen cars. |
+| RT-10 Economy repair | RT-02 forced into economy mode, with coordinates close but the road leg A↔B 15. | The approximation pairs A and B. The priced route is 20 > 10. Repair moves B to the empty D2: 720 s, 2 placed, no further fetch. | Publishing an over-limit route. Using approximations for limit checks. |
+| RT-11 Request plan | Fixed fictional 6×15 and 20×50 rosters, no network. | Full: one 15×15 request (150 credits); four 25×25 requests (1,000). Economy: one k×k request per car, total Σk². Mode chosen against the allowance. | 1×49 request explosions. Unpredicted spending. |
+
+### 12.10 Proposed delivery
+
+| Step | Scope | Gate |
+|---|---|---|
+| RT0 · Decide | Student decisions on this section, the rule-2 policy, the limit wording and the route-pricing allowance (ISSUE-105, ISSUE-107). Fix ISSUE-104. | Decision recorded in EVIDENCE |
+| RT1 · Canonical legs and request planner | Coordinate-keyed evidence and legacy merge. Square-block and per-car planners with credit prediction. Inter-stop legs in the fixture and loopback providers (ISSUE-108). | RT-04 at projection level, RT-11, existing reuse and handoff checks |
+| RT2 · Pure route model | Held–Karp, rules 1–3, the per-count oracle, greedy, economy regrouping and repair. | RT-01–RT-03, RT-05, RT-09, RT-10 |
+| RT3 · Full-mode solver | HiGHS worker, enumeration, incumbents, labels, work budgets. Benchmark crowded stops, tight capacities, many equal optima, generous limits, and a concurrent edit on a second trip (ISSUE-106). | RT-07. Budgets set from measurements. Decide whether to continue. |
+| RT4 · Contract and UI | Result version, validation, storage, commit and reload, driver cards, labels, limit notice. | RT-06, RT-08, PostgreSQL and Chromium suites |
+| RT5 · Live check | One small live trip with a nearby pair, within an owner-confirmed cap. | Predicted versus observed credits in EVIDENCE |
+
+Accepting the design changes the address claim to "maximum passengers first, then minimum estimated route detour, with proofs stated per plan." The claim, limits, fixtures and evidence must be updated together, per AGENTS.md.
+
+## 13. Proposed: reuse of known places and driving times
+
+**Status: revision 4 with the ownerless-trip correction, ready for offline implementation.** The student requested this on 2026-11-26. GroupRide trips are expected to repeat the same venues and participant addresses, and Geoapify credits are the main operating constraint. This section works with today's matcher and does not change matching or saved plans.
+
+Two reviews shaped it. Revision 2 answered an independent agent review of revision 1 (V1–V11). Revision 3 answered the [technical review of revision 2](EVIDENCE.md#technical-review-of-reuse-revision-2) (ISSUE-113, W1–W12). Revision 4 answers the [independent technical review of revision 3](EVIDENCE.md#independent-technical-review-of-reuse-revision-3) (X1–X6). 13.12 lists every issue and its resolution.
+
+### 13.1 What costs credits today
+
+| Activity | Credits | Code |
+|---|---|---|
+| Address search | One autocomplete request per pause in typing (300 ms debounce), about 1 credit each. The typical count per address entry is unmeasured (SC-14). | `src/app/locations/LocationPicker.tsx`, `src/locations/geoapify.ts` |
+| Driving times | `max(s, t) × min(s, t, 10)` base credits per matrix request, plus distance surcharges. A cold 20×50 preview costs about 570. Reuse is trip-local and keyed by location ID. | `src/trips/address-preview.ts`, `src/routing/matrix.ts` |
+
+Every selection receives a new random location ID, so "the same place" can only be recognized by coordinates.
+
+### 13.2 Goals, guarantees and non-goals
+
+**Goals:**
+
+1. Avoid refetching a directed coordinate pair that the same organizer observed within the freshness window.
+2. Let the organizer re-select a known place without a provider search, with no weaker wrong-building protection than provider search.
+3. Let a returning invitee re-select their own earlier address without a provider search.
+4. Reveal no address, and no fact about an organizer's other trips, to anyone who could not already see it.
+
+**Guarantees (testable):**
+
+- **Credits.** For a given roster and trip evidence, a preview's **predicted base credits** never exceed what today's planner would predict using **today's rules alone**: ID matches and identical endpoints, with no coordinate or store reuse (13.7). Actual spend can still differ, through distance surcharges, retries, concurrent misses or expiry.
+- **Reuse writes never fail anything.** Store writes, saved-place writes and pass creation never fail or delay a preview or registration beyond their time boxes.
+- **Store reads fail before spending.** A store **read** failure returns the same retryable database failure as any other read, before any credits are spent (13.6).
+
+**Non-goals:**
+
+- Participant accounts.
+- Sharing between organizers.
+- Merging nearby coordinates.
+- Cheaper first-ever lookups.
+- Section 12's inter-pickup legs. Those exceed today's 1,100-leg evidence limit and need their own schema and benchmark gate.
+
+### 13.3 Organizer workspace and who may use it
+
+GroupRide has no organizer login. A trip ID authorizes organizer routes, and anyone who can reach the server can create a trip. Reuse therefore needs its own credential.
+
+**Sessions.**
+
+- **Creating a workspace.** The organizer page calls `POST /api/workspace` before enabling any write. Without a valid session cookie, this creates a workspace and a session. With one, it returns the existing workspace.
+- **The cookie.** It holds a 256-bit session secret: `HttpOnly`, `SameSite=Strict`, scoped to the app origin, and `Secure` over HTTPS. Only its SHA-256 hash is stored.
+- **Concurrent first tabs.** The browser serializes the call across tabs with the Web Locks API (`navigator.locks`). The second tab then sees the cookie the first one set. Where Web Locks is unavailable, two simultaneous first tabs can still create two workspaces; this is a documented residual, covered by SC-10.
+- **Ownership is fixed at creation.** Trip creation requires a session (409 `WORKSPACE_REQUIRED` otherwise; the page creates one and retries). The trip's `workspace_id` is written in the same keyed transaction as the trip, from the session at first application. A same-key replay returns the original receipt, so ownership never changes, even if the cookie has changed since. Pre-migration trips have no owner and cannot access a workspace store.
+
+**Who may use what.** Only a valid session whose workspace matches a non-null `trip.workspace_id` owns the trip.
+
+| Requester for a trip | Workspace store, read and write | Saved places | Estimate details shown (13.8) |
+|---|---|---|---|
+| Owner | Yes | Yes | Full: per-origin counts, request and credit metrics, and observation dates |
+| A different workspace, or no cookie (including the owner after clearing cookies, until recovery) | **No**: the preview behaves exactly as today | No | **None**: the plan, estimated detours and attribution only |
+| Guest, through an invite | No | No | None; guests never see summaries |
+
+- **Previews.** A preview requested by a non-owner skips both store reads and store writes. If its result becomes the stored winner for that version, the owner later sees a correct preview that simply didn't use the store.
+- **Stored winners and saved dashboards.** These are shown to non-owners the same way, with no counts, credit metrics or dates. This holds on every trip version and after reload, so an estimate inherited as `trip` origin in a later rematch cannot reveal its earlier date (X3). Apply this rule on the server to every ownerless trip, including a pre-migration trip and a trip whose workspace was purged. Both retain the plan, estimated detours and attribution.
+- **Residual.** A trip-link holder can still infer that the store was used from a fast first preview with zero fetches. This is accepted and documented: it shows only that the owner saw this trip's own coordinates before, and those addresses are already visible to a link holder.
+
+**Recovery and revocation.**
+
+- **Recovery codes.** A separate recovery code is shown once on request, and only its hash is stored. Redeeming it in another browser creates a **new** session for the same workspace, so several browsers can hold their own sessions.
+- **"Rotate recovery code"** invalidates the previous code.
+- **"Sign out other browsers"** deletes every other session.
+
+### 13.4 Components
+
+| Component | Saves | Visible to | Phase |
+|---|---|---|---|
+| **A. Workspace driving-time store** | Matrix credits for pairs the owner's earlier trips observed | Nobody: server-internal | REUSE-1 |
+| **B. Trip-local coordinate reuse** | Matrix credits when a second person registers at a known address in the same trip. Prevents new conflicting estimates (ISSUE-108, partly). | Nobody | REUSE-1 |
+| **C. Workspace saved places** | Search credits for venues and organizer-entered participants | The owner's sessions | REUSE-2 |
+| **D. Guest place pass** | Search credits for returning invitees | Only the guest's browser | REUSE-3 |
+| **E. Autocomplete response reuse** | Repeated query text | Nobody | Deferred until SC-14 |
+
+### 13.5 Data model (proposed migration `006_reuse.sql`)
+
+```sql
+CREATE TABLE workspaces (
+  id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  recovery_hash text        UNIQUE,                 -- NULL until a code is issued
+  last_used_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE workspace_sessions (
+  secret_hash  text        PRIMARY KEY,
+  workspace_id uuid        NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
+  last_used_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE trips ADD COLUMN workspace_id uuid REFERENCES workspaces (id) ON DELETE SET NULL;
+
+CREATE TABLE travel_times (           -- A. coordinates only; never returned by any API
+  workspace_id   uuid             NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
+  routing_policy text             NOT NULL,
+  from_point     text             NOT NULL,   -- exported coordinateKey(): JSON.stringify([lon, lat])
+  to_point       text             NOT NULL,
+  seconds        double precision NOT NULL CHECK (seconds >= 0 AND seconds <= 1000000),  -- the evidence validator's ceiling
+  observed_at    timestamptz      NOT NULL,
+  PRIMARY KEY (workspace_id, routing_policy, from_point, to_point),
+  CHECK (from_point <> to_point)
+);
+CREATE INDEX travel_times_observed ON travel_times (observed_at);
+
+CREATE TABLE saved_places (           -- C. owner-entered places only
+  id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id uuid        NOT NULL REFERENCES workspaces (id) ON DELETE CASCADE,
+  provider     text        NOT NULL CHECK (provider IN ('fixture', 'geoapify')),
+  kind         text        NOT NULL CHECK (kind IN ('venue', 'participant')),
+  point_key    text        NOT NULL,
+  snapshot     jsonb       NOT NULL,        -- snapshotBodySchema
+  last_used_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (workspace_id, provider, kind, point_key, snapshot)
+);
+
+CREATE TABLE place_passes (           -- D. browser-generated secret; hash only
+  pass_hash    text        PRIMARY KEY,
+  provider     text        NOT NULL CHECK (provider IN ('fixture', 'geoapify')),
+  snapshot     jsonb       NOT NULL,
+  last_used_at timestamptz NOT NULL DEFAULT now()
+);
+GRANT SELECT, INSERT, UPDATE, DELETE ON workspaces, workspace_sessions, travel_times, saved_places, place_passes TO groupride_app;
+```
+
+**Freshness and deletion are separate:**
+
+| Data | Used while | Deleted after |
+|---|---|---|
+| Driving time | `observed_at ≥ now − maxAge` (30 days proposed) | `maxAge + 7 days` |
+| Saved place | Always | 365 days unused (proposed) |
+| Pass | Used within 180 days. Expiry is checked **before** `last_used_at` is refreshed. | 180 days unused |
+| Workspace and its sessions | — | 365 days unused, cascading to its data |
+
+**What the deletion ages cover.** They apply only to the reuse tables. A place or an observation copied into a trip's own records (participant snapshots, preview evidence, saved plans) stays there under the existing retention, until the offline reset (ISSUE-045). **When deletion happens.** It is opportunistic: cleanup starts at the next server startup or reuse write after an age passes. A backlog can require several passes. An idle app has no fixed deletion date. A guaranteed date would need a scheduled job, which is part of the ISSUE-109 decision.
+
+**Purge.** Expired data is purged globally, not only for the workspace that happens to write. Any reuse write transaction also deletes up to 1,000 expired rows from each table, oldest first, and so does server startup. An inactive workspace's coordinates are therefore removed even if that workspace never writes again, as long as the app keeps being used. The offline reset truncates all five tables in its existing transaction, and reset refuses to run while the app is connected.
+
+**Generation binding.** Every reuse write runs under the shared dataset lock and first reads `dataset_generation`. If the value differs from the generation captured when the work began, the write is discarded. Holding the lock after a reset proves nothing on its own; the generation comparison does.
+
+### 13.6 Driving-time lookup
+
+**Resolution order.** For each required pair, `computeAddressPreview` stops at the first hit. Each source is recorded as the leg's **origin** (13.8):
+
+1. **`trip`: this trip's evidence by location ID.** Unchanged and never expired.
+2. **`trip`: this trip's evidence by coordinates.** Index the **unfiltered** validated candidate by coordinate pair, using its recorded participant points. The earliest `observedAt` wins. This prevents new conflicts for co-located people; legacy conflicts persist (ISSUE-108).
+3. **`local`: identical endpoints.** Unchanged.
+4. **`store`: the workspace store.** Only when the requester owns the trip (13.3) and `maxAge > 0`. The query takes rows for that workspace and policy with `observed_at` between `now − maxAge` and `now + 5 min` (allowing clock skew). Rows outside that window are misses.
+5. **`fetched`: the provider**, through the credit-guaranteed planner (13.7).
+
+**Before the permit.** Steps 2 and 4 run **before** routing-permit acquisition, and `needsLive` is computed after steps 1–4, so a fully covered preview never takes the permit.
+
+**The store read.** It is one parameterized `unnest` query against the primary key, in a short `READ ONLY` transaction with the dataset lock, bounded by the preview deadline. If it fails, the preview returns the normal retryable database failure before anything is dispatched. This is a deliberate choice for credits over availability: a preview that cannot read the database is unlikely to publish.
+
+**Batch persistence.** Every adapter, the fixture adapter included, calls `onBatch(cells, observedAt)` once a batch has decoded and validated:
+
+- The decoded batch is reported **before** the abort check. Supersession stops only further dispatch; a deadline abort can still lose an in-flight batch, and that is accepted.
+- The hook hands cells to the permit handoff.
+- For an owned trip, it also upserts finite cells into the store, under the generation binding (13.5), in a separate transaction with a 200 ms time box. Failures are counted and ignored.
+
+The upsert also repairs a future-dated corrupt row:
+
+```sql
+ON CONFLICT (workspace_id, routing_policy, from_point, to_point) DO UPDATE
+  SET seconds = EXCLUDED.seconds, observed_at = EXCLUDED.observed_at
+  WHERE EXCLUDED.observed_at > travel_times.observed_at
+     OR travel_times.observed_at > now() + interval '5 minutes'
+```
+
+**Not shared:** confirmed no-route results stay trip-local.
+
+### 13.7 Credit-guaranteed request planning
+
+The planner resolves the remaining required pairs into three candidate request plans and prices each with the documented formula:
+
+| Plan | Fetches | Purpose |
+|---|---|---|
+| **P0 · Today's plan** | The pairs left after **steps 1 and 3 only** (ID matches and identical endpoints), batched by today's `matrixBatches`. Neither coordinate reuse (step 2) nor the store (step 4) is applied. This is exactly what GroupRide sends today. | Defines the guarantee |
+| **P1 · Residual** | The pairs left after steps 1–4 | Cheapest when hits are aligned |
+| **P2 · Covering** | The covering rectangle of each P1 batch family | Avoids fragmentation |
+
+- **Choice.** The plan with the lowest predicted base credits is sent. On a tie, the order of preference is P1, P2, P0.
+- **Guarantee.** Because P0 is always a candidate, predicted base credits never exceed today's. Two reviewed counterexamples show why P0 must be computed before **any** new reuse:
+  - 16 drivers missing the same 20 pickups plus 4 missing all 50 cost **400** under P0. One scattered store hit per driver raises both P1 and P2 to **500**.
+  - On a roster where today's batches cost **424**, coordinate reuse alone fragments the rows, giving 500 for the residual and 520 for the covering plan, even with an empty store. Revision 3 applied step 2 before P0 and so lost this case (X1).
+- **Precedence.** When P0 or P2 refetches cells already resolved by step 2 or step 4, those legs keep their resolved origin and value (`trip` or `store`). That keeps co-located estimates consistent. The fresh cells only refresh the store.
+- **Prediction recorded.** The chosen plan's predicted credits are logged per preview, and the summary records them as physical cells and predicted credits (13.8).
+
+### 13.8 Summary, provenance and validation
+
+Logical provenance (which source answered each leg) and physical cost (what was requested and billed) are recorded separately, so neither can be inferred from the other.
+
+- **Evidence schema `address-evidence-3`** adds an `origin` field (`trip`, `local`, `store` or `fetched`) to each **required** leg. Version 2 stays readable for reuse and commit, so its stored previews are unchanged.
+- **Summary version 2** (a discriminated union with version 1) has:
+  - **logical counts** by origin, which sum to the required legs;
+  - **physical** `requests`: the list of dispatched rectangle shapes `[sources, targets]`;
+  - `predictedBaseCredits`;
+  - `observedFrom` and `observedTo` over all provider-origin legs.
+- **Logical and physical are validated separately (X2).** Logical counts are recomputed from the required legs' origins. Physical fields are checked only against themselves: `predictedBaseCredits` must equal the formula summed over `requests`, and each shape must be within provider limits. **No rule relates cells to fetched legs.** Coordinate deduplication legitimately makes cells fewer than legs: one driver and two passengers at one address need 5 logical legs from 3 cells. Handed-off cells from a superseded preview make legs `fetched` with no dispatch of this preview's own.
+- **Commit check.** `assertSummaryMatchesEvidence` recomputes **every** logical count from the version-3 origins. Shifting one leg between `trip` and `store` fails, even with the sum unchanged.
+- **Owner display:** "N reused stored estimates" (not "from earlier trips", since a batch from a superseded preview of the same trip also lands in the store), the credit metrics, and observation dates.
+- **Non-owner display (X3):** the plan, each assignment's estimated detour, the total and the provider attribution, which licensing requires. **No** origin counts, request or credit metrics, or observation dates, on any trip version, stored winner or saved plan.
+  - Revision 3's redacted date range is withdrawn: an estimate first used with origin `store` is inherited as `trip` on the next rematch, so the range would reveal its earlier date.
+  - Only verified owners receive the estimate details, including when the database contains a pre-upgrade summary.
+
+### 13.8a Compatibility across the upgrade
+
+The address algorithm identifier embeds the evidence schema (`addressAlgorithmId` = solver + evidence schema + routing policy), and Save rejects any preview whose identifier differs from the current one (`ALGORITHM_CHANGED`, `src/trips/commit.ts`). Moving to `address-evidence-3` would therefore strand every preview made just before deployment (X4). Revision 4 adds:
+
+- **Committable identifiers.** `committableAlgorithms(trip)` returns the current identifier plus `mincostflow-v1+address-evidence-2+<same policy>`. Version 3 changes only provenance fields, not matching, eligibility, rounding or the routing policy, so a version-2 preview's plan is equally valid. Any other identifier, such as another solver or another policy, is still rejected with `ALGORITHM_CHANGED`.
+- **Save keeps the original identifier.** It records the **preview's own** `algorithm_version`, not the current one. Today `commitPlan` is passed the expected identifier. The preview identifier determines the accepted pair of formats. The legacy evidence-2 identifier requires the existing untagged summary. The evidence-3 identifier requires summary version 2.
+- **Stored winners.** A version-2 winner stays readable and committable for its version. A new preview request at the same version after the upgrade looks up the current identifier, as today, so it may publish a version-3 preview beside it. Either can be saved.
+- **Reuse.** A version-2 preview remains a valid reuse candidate. Its legs have no origins, and they enter the next preview as `trip`.
+- **Retiring version 2.** A later, recorded decision can retire it, after which `ALGORITHM_CHANGED` applies.
+
+### 13.9 Workspace saved places
+
+**Saving.** A selection attached through an organizer route **by the owner** is upserted after the keyed mutation commits. This runs as post-response work (Next.js `after()`, documented in `node_modules/next/dist/docs/01-app/03-api-reference/04-functions/after.md`), in its own transaction with a 50 ms lock timeout and the generation binding. It is capped at 500 places, evicting the least recently used. Invite-route selections are never saved.
+
+**Choosing a saved place is explicit, never inferred from text.** This avoids the wrong-building risk of text-matched tokens (W3: a search for `12 Example Road` must not yield `112 Example Road`):
+
+1. The owner's picker loads the workspace's places with `GET /api/workspace/places`, which needs the owner session. Venue searches get `kind = 'venue'` and need **no trip**, so a saved venue can be chosen while creating a trip. Trip-scoped searches also get participants, and only for an owned trip.
+2. Typing filters this list in the browser for display. **Free text never produces a token.**
+3. Selecting a place by ID calls `POST /api/workspace/places/{id}/select` with the purpose and scope. For a venue the scope is null, matching today's venue tokens. For a participant the scope is an owned trip. The server checks the session, the workspace, the provider and, for participants, trip ownership. It then issues a fresh token through the existing `signSelection`. Attachment verification is unchanged.
+
+**When to skip the provider.** The picker withholds the provider search, and so the credit, only while a saved place is a **strict match** for the typed text:
+
+- The text is classified with the existing `classifyLocationQuery`, and ambiguous text raises the same clarification as today.
+- **Numbered addresses.** The normalized saved street line must begin with exactly the query's house number followed by a space. The remainder's `streetKey` must equal the query's, and any given locality must pass `matchesUsLocality` against the saved city, state and postcode.
+- **Named places.** The normalized saved label must equal the query's name. If the query supplies a city or other locality, it must pass `matchesUsLocality` against the saved place. Without a locality, only a single saved place with that name may withhold the provider.
+- **Anything else** (partial street text, or a substring match such as `12` versus `112`) shows saved places under "Other saved places" but **does not** withhold the provider search. Today's provider filter then runs.
+- **Missing structured fields.** If a saved snapshot lacks the fields needed for the check, it is never treated as a strict match.
+
+These rules reuse the pure modules `house-number.ts` and `us-locality.ts` on both client and server. Their checkpoint-D wrong-building cases are rerun against saved snapshots (SC-11).
+
+"Search all addresses" is always available. The owner can delete a saved place.
+
+### 13.10 Guest place pass
+
+**Default off** (proposed for ISSUE-112), because the stored label is visible to the next person using the same browser profile. The checkbox reads: "Remember this address on this device. Anyone using this browser profile will see it."
+
+**Creation:**
+
+- **Before submit.** The browser generates a 256-bit secret with `crypto.getRandomValues` and keeps it **pending** alongside the request key. It sends only `passHash = SHA-256(secret)` with the registration. A retry with the same key resends the same hash.
+- **Server.** On first application of the key, the server stores the pass under a savepoint. A failure there is ignored, and the response carries `passSaved: false`. The receipt holds no secret, and a replay returns the same `passSaved`.
+- **Success.** If registration succeeds and `passSaved` is true, the pending pass becomes saved. If `passSaved` is false, it is discarded and the page says the address wasn't remembered.
+- **Failure.** If registration fails terminally, the pending pass is discarded. If the outcome is unknown, it stays pending until the same-key retry resolves it.
+
+**Use.** `POST /api/invites/{inviteId}/place` with the secret **in the request body**, never in a URL:
+
+- The server rejects any pass unused for more than 180 days **before** refreshing it.
+- It checks the provider.
+- It returns a token scoped to the **invite ID**, which is what invite registration verifies (`scopeId`).
+- Unknown, expired and forgotten passes all get one generic response, and the browser drops the entry.
+
+**Forget**, also offered on Leave:
+
+- The browser hides the entry at once, marks it "forget pending" and sends the delete.
+- If the request fails or the guest is offline, the browser retries on the next visit. The server row expires anyway after 180 days unused.
+
+**Secret handling.** Pass routes are excluded from request-body logging. A test asserts that no secret reaches Next.js spans, metrics or logs, following the existing provider-privacy tests.
+
+### 13.11 Latency and savings
+
+| Path | Added work | Basis |
+|---|---|---|
+| Rematch with no new places | None | L-17: a 20×50 preview reusing all 1,070 times took median 44 ms, worst 61 ms |
+| Preview needing new times | One indexed read of at most 1,070 keys and pricing three plans before dispatch, plus a time-boxed write per batch | Provider calls measured at 929–973 ms live |
+| Owner picker | One list fetch per page, then filtering in the browser | Replaces 524–2,384 ms provider searches when a place is chosen |
+
+SC-13 measures these on the PostgreSQL test database before REUSE-1 passes.
+
+| Scenario, same owner, within freshness | Today | With components A–D |
+|---|---:|---:|
+| Weekly 20×50 trip, same people and venue, every required finite observation fresh | ≈ 570 matrix credits plus searches | 0 matrix credits. Searches only for guests without a pass and for owner "Search all". |
+| Same trip growing from 49 to 50 passengers, all older legs covered | 21 (20 driver→pickup + 1 pickup→venue) | 21, or 0 if the new address is a known one |
+| Second person at a known address in the same trip | 21 | 0 |
+| First-ever trip, a non-owner's preview, or a new workspace | ≈ 570 | Unchanged |
+
+### 13.12 Issues and resolutions
+
+**Revision 1** (R1–R18) and the **agent review** (V1–V11) are resolved as in revision 2, except where revised below.
+
+**Technical review of revision 2:**
+
+| # | Issue | Resolution |
+|---|---|---|
+| W1 | Previews used the workspace of the trip, so a trip-link holder got a preview seeded from the owner's other trips, with revealing provenance. | Reads and writes only when the requester owns the trip. Display is redacted for non-owners, stored winners and saved dashboards included (13.3). |
+| W2 | The planner could spend more than today: 500 against 400 in the review's counterexample. | P0 is always a candidate. The guarantee is stated in predicted base credits (13.7). |
+| W3 | Substring search could sign a token for the wrong building (`12` against `112`). | Free text never signs. Selection is by ID. Strict-match rules decide only whether a provider search is withheld (13.9). |
+| W4 | "Reused from earlier trips" could be false, and aggregate checks couldn't detect a shift between origins. | Per-leg origins in evidence version 3, every count recomputed at commit, physical cost recorded separately (13.8). |
+| W5 | Expiry happened only when the same workspace wrote again. Pass expiry was refreshed before being checked. The cache allowed larger values than the validator. Future-dated rows could never be replaced. | Global purge with separate deletion ages. Pass expiry checked before refresh. A 1,000,000-second ceiling. An upsert that repairs future-dated rows (13.5–13.6). |
+| W6 | "Never fail a preview" contradicted failing on a store read error. | Goals restated: writes never fail; a read failure fails before spending (13.2). |
+| W7 | A lock taken after a reset cannot show that delayed work belongs to the new generation. | Capture the generation, then compare it inside each write (13.5). |
+| W8 | The pass secret reaches the server on use and forget; failure states were undefined; defaulting on exposes the label. | Body-only with no logging, and a test. Pending, saved and forget-pending states. Default off (13.10). |
+| W9 | Two first tabs could create two workspaces. Replay and ownership were unspecified. Recovery could be neither rotated nor revoked. | Workspace established before any write, serialized with Web Locks. Ownership fixed in the trip transaction. Sessions, rotation and revocation (13.3). |
+| W10 | The 21-credit example assumed a 51st passenger, beyond the limit. | The 49→50 fixture (13.11). |
+| W11 | "Pay at most once per pair" isn't true: covering refetch, concurrent misses and expiry all repeat payment. | Goal restated as avoiding refetch within freshness. The guarantee is a bound on predicted credits. |
+| W12 | Section 12's inter-pickup legs exceed the 1,100-leg evidence limit. | Out of scope here, and recorded as a gate for section 12. |
+
+**Independent review of revision 3:**
+
+| # | Issue | Resolution |
+|---|---|---|
+| X1 | "Today's plan" was computed after coordinate reuse, which alone can fragment batches: 424 today against 500 or 520 proposed, with an empty store. | P0 uses today's rules only, and both counterexamples are in SC-04 (13.7). |
+| X2 | The rule "cells ≥ fetched legs" rejects a valid shared pickup (5 legs from 3 cells). | Physical fields are validated from dispatched shapes alone, and a cold shared-address round trip is in SC-16 (13.8). |
+| X3 | A store estimate inherited as `trip` in a later rematch reveals its date through the redacted range. | Non-owners see no counts, metrics or dates on any version, and SC-02 spans two versions and a reload (13.8). |
+| X4 | Version-2 previews could not be saved after the upgrade, because the identifier includes the evidence schema. | A committable identifier set, Save records the original identifier, and the upgrade is tested with a real pending preview (13.8a). |
+| X5 | Venues could not be chosen before a trip exists. A named venue could withhold the provider without checking a supplied city. | Venue selection takes a null scope, and a supplied locality must match (13.9). |
+| X6 | Deletion ages cover only reuse tables, with no fixed date while the app is idle. | Stated explicitly, and a scheduled job is left to the ISSUE-109 decision (13.5). |
+
+**Residual limits:**
+
+- Trips without a surviving owner, including legacy trips, display the plan, detours and attribution.
+- A trip-link holder can infer store use from a fast first preview, which reveals only this trip's own coordinates.
+- Two first tabs without Web Locks can split a workspace.
+- A deadline abort can lose an in-flight batch.
+- Legacy conflicting estimates persist.
+- ISSUE-062 still blocks real addresses.
+
+### 13.13 Acceptance checks
+
+All database checks use the designated PostgreSQL test database and a counting loopback provider.
+
+| ID | Check |
+|---|---|
+| SC-01 | An owner's second trip with the same coordinates, within `maxAge`, makes zero matrix calls and takes no permit. Its summary shows all legs with origin `store`. Commit and reload succeed. |
+| SC-02 | **Same trip, three viewers, two versions.** The same trip is previewed and viewed by its owner, by a different workspace, and by the owner after clearing cookies. Only the owner's preview reads and writes the store; the others skip the workspace store. Then the owner edits the roster, so a store estimate is inherited as `trip`, rematches, saves and reloads. On both versions, on the stored winner and on the reloaded saved plan, non-owner responses contain no origin counts, request or credit metrics, or observation dates, while the plan, detours and attribution appear. Purge the owning workspace in PostgreSQL, confirm the trip survives with a null owner, then repeat the stored-preview and saved-dashboard response checks. Apply the same checks to a genuine pre-migration trip. |
+| SC-03 | **Upgrade.** A preview published under the pre-upgrade identifier (evidence version 2, summary version 1) is pending when the new build starts. It still saves, the plan records its original identifier, a same-key replay returns the original receipt, and reload displays it. A preview with another solver or policy is still rejected with `ALGORITHM_CHANGED`. The dashboard and stored-hit reads accept both versions. **Moving one leg's origin from `trip` to `store`, with the sum unchanged, fails the commit check.** |
+| SC-04 | **Credit guarantee.** The 400-versus-500 store-hit fixture chooses P0. The 424-versus-500/520 coordinate-reuse fixture, with an empty store, chooses P0 computed by today's rules alone. An aligned-hit fixture chooses P1, and a fragmented fixture chooses P2. Every chosen plan is at most today's prediction, and `predictedBaseCredits` matches the formula over the recorded shapes. |
+| SC-05 | `maxAge` exceeded refetches exactly the expired pairs. `maxAge = 0` neither reads nor writes. A future-dated row is a miss and is replaced by the next fetch. Global purge removes another workspace's expired rows. |
+| SC-06 | A second passenger at a known address inherits the trip's observation. A no-route is not shared. |
+| SC-07 | A supersession during an in-flight batch still stores and hands off the batch. An injected write failure still publishes. A store read failure returns the retryable error with zero provider calls. The fixture adapter fires `onBatch`. |
+| SC-08 | **Generation.** Three separate cases: a batch write delayed past a reset is discarded; a superseding preview's late write is discarded after a reset; a post-response saved-place write delayed past a reset is discarded. Reset is refused while the app is connected and empties all five tables. |
+| SC-09 | **Isolation.** A stranger's own trip gets no saved places and no store hits. Requests with no session, the wrong session, or a non-owned trip get no places. Invite routes never see or create saved places. |
+| SC-10 | **Workspaces.** Two tabs open concurrently with Web Locks create one workspace. Without Web Locks the split is observed and documented. Replaying trip creation after a cookie change keeps the original owner. Recovery creates a new session; rotating invalidates the old code; "sign out other browsers" revokes other sessions. |
+| SC-11 | **Saved-place selection.** Typing `12 Example Road` with saved `112 Example Road` does not withhold the provider, and no token is issued without selection by ID. Checkpoint-D wrong-building cases rerun as saved-place cases: house number versus prefix, directional, locality versus city name, numeric venue names. A strict match withholds the provider, and selection by ID attaches through the unchanged verifier. A saved venue can be selected before any trip exists. A saved venue name with a mismatched supplied city does not withhold the provider. |
+| SC-12 | **Pass lifecycle:** default off; pending, saved and discarded on each registration outcome; `passSaved: false` path; replay; invite-scoped token; expiry checked before refresh; generic response; forget-pending retry; no secret in receipts, spans or logs. Includes a Chromium flow across two invites. |
+| SC-13 | Latency: added p95 for the store read, three-plan pricing, the batch upsert and the places list. Recorded in EVIDENCE. |
+| SC-14 | Autocomplete requests per address entry, scripted, to size the search savings and decide on component E. Run in REUSE-0 so the result can shape REUSE-2. |
+| SC-15 | Existing suites pass (matching, unit, concurrency, Chromium). |
+| SC-16 | **Cold shared address.** One driver and two passengers at the same coordinates: the preview needs 3 cells for 5 logical legs, then saves and reloads with matching counts and credits. |
+
+### 13.14 Proposed delivery
+
+| Step | Scope | Gate |
+|---|---|---|
+| REUSE-0 · Decide and measure | ISSUE-109 (retention, freshness and deletion ages), ISSUE-112 (pass default off and retention), confirm the workspace model. Run SC-13 (database) and SC-14 (search) as early probes. | Decisions and measurements in EVIDENCE |
+| REUSE-1 · Workspace and driving times | Migration, sessions, ownership, steps 2 and 4, three-plan planner with P0 by today's rules, `onBatch`, abort order, evidence version 3, summary version 2, non-owner omission, committable identifiers, generation binding, purge | SC-01–SC-10 for workspace and routing, SC-13, SC-15, SC-16. Finish saved-place assertions in REUSE-2. |
+| REUSE-2 · Saved places | Post-commit saving, places list and select-by-ID including trip-less venues, strict-match withholding with the locality rule, delete | Saved-place assertions of SC-08 and SC-09, SC-11 |
+| REUSE-3 · Guest place pass | Browser states, endpoints, join and leave UI, logging exclusion | SC-12 |
+| REUSE-4 · Component E decision | Based on SC-14 | Recorded decision |
+
+Live cross-trip reuse stays off until the owner decides ISSUE-109. Until then, REUSE-1 can be built and tested on fixture and loopback providers.

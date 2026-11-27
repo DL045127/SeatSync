@@ -212,6 +212,185 @@ On the working diff over `d6f9b8a`, lint, typecheck, and all 39 Chromium workflo
 
 Independent review of the two recorded blobs reran both invitation spec files against a fresh production build and the designated PostgreSQL database. All six Chromium workflows passed. The delayed-response case verified that the driver’s private link stayed open, the shared invite restored the passenger’s retry after reload, and the retry used the first request’s key and returned its exact private link. The organizer’s roster contained exactly one passenger before and after replay. ISSUE-103 is technically closed. Student inspection remains pending.
 
+### Adversarial matching correctness review
+
+The student asked for an explanation and adversarial review of lowest-cost matching. On `3b3b65b`, all 71 matching tests passed. A separate matrix enumerator bypassed the production cost lookup and checked all 64 assignments for each of 157,464 instances. These cover every three-driver, three-passenger matrix with cells absent, zero or one, and all combinations of driver capacities one and two. Both objective values agreed in every case, and all returned plans passed feasibility. A separate sparse case with 20 drivers and 50 passengers required reassigning 19 riders to reach 20 matches and cost 20. It passed.
+
+**ISSUE-104.** With fictional directed leg seconds of 0.5, 0.25, and 0.25000000000000006 for driver to pickup, pickup to venue, and driver to venue, respectively, the computed difference is 0.49999999999999994. The documented nearest-second rule and the test reference yield zero. Production adds 0.5 before taking the floor, which rounds the intermediate sum to 1 in floating point. A direct projection produced no edge at a zero-minute limit and a one-second edge at a one-minute limit. This is a discrepancy in the input to the solver. No live provider frequency was measured. Application code was unchanged and student inspection is pending. [Projection](../src/matching/address.ts) · [Independent reference](../tests/matching/address-reference.ts)
+
+### Route-based pickup cost proposal
+
+On 2026-11-26 the student asked Claude Code to revise the matcher design. The goal was to account for passengers who share an address or live near each other in the same car, and to use those costs when choosing the plan. This was a documentation episode only. No application code, tests or schema changed.
+
+The student made these decisions during the discussion:
+
+- A driver should be charged only for the actual extra time needed to pick up the passengers in their car.
+- The matcher should optimize using that combined cost.
+- Larger trips must remain supported.
+- Where optimality cannot be proven, plans should carry labels that distinguish proven plans from best-found plans.
+
+The student also supplied review comments on an intermediate shared-address design. These covered:
+
+- a canonical cost matrix shared by both solve phases;
+- the `y ≤ x` stop constraint;
+- a separate result version and Save → reload check;
+- treating solver runtime as an experiment;
+- a retryable failure on timeout;
+- corrections to the multi-stop credit estimate and coverage argument.
+
+The resulting design is [section 12](ARCHITECTURE-v2.md#12-proposed-route-based-pickup-cost) of the address architecture. ISSUE-105 to ISSUE-108 record the open decision, benchmark, credit budget and evidence-keying work.
+
+One correction to the earlier discussion: the design offers a "within X minutes" cost guarantee only when every route was enumerated. Otherwise the label says the plan is not verified as cheapest.
+
+Checks: section anchors and new repository links were verified to resolve. The hand-computed fixture arithmetic in section 12.7 was rechecked by enumeration. No build or test was run because no code changed. The student has not yet reviewed the written design.
+
+### Technical review of route-cost bounds
+
+The student requested a technical review of section 12 before implementation. For a frozen matrix, a validated plan placing N passengers at cost U establishes an upper bound U on the minimum estimated cost at exactly N placements. If maximum coverage is unresolved, a higher-coverage plan can cost more than U. A gap needs a valid lower bound at that same coverage. Zero is always valid for nonnegative costs. A restricted route list can produce feasible plans but its minimization bound alone gives no global lower bound. RT-07 needs to enumerate the optimum at the returned coverage and test coverage separately. Keep the best validated solution from each phase and cap candidate sets examined as well as feasible columns emitted.
+
+The existing matrix planner was exercised offline with 50 distinct fictional pickups and all 2,450 directed off-diagonal pairs. It produced 50 one-by-49 requests costing 2,450 base credits for the second round, or 3,020 including the proposed 570 for the first. The four-block alternative needs a planner that can deliberately include diagonal cells and discard those results. Neither figure includes surcharges or retries. No provider calls or application edits were made. The written design and the limit migration still await a student decision.
+
+### Route-cost proposal revision 2
+
+The student asked Claude Code to address the bounds review above. The student also stated that API credits are the main concern: one plan generation should not consume a heavy share of the 3,000 daily credits. The student proposed running the existing solver and then pricing each driver's actual route. This was a documentation episode only. Section 12 was revised as follows:
+
+- **Labels.** Every plan reports passengers placed and estimated total detour. Coverage proof and cost proof are separate, and cost claims are scoped to N passengers. A "within X" gap appears only with a lower bound from a complete route enumeration, rounded up to whole minutes.
+- **Solver.** The best validated plan is kept across all stages. Work budgets count candidate sets examined. Enumeration and repair share the preview deadline.
+- **Limits.** The subset rule is withdrawn. Rule 2 (each pickup must fit the limit on its own) is now an explicit product decision. "Coverage can only fall" is qualified to the same canonical matrix, and the new limit meaning is shown to organizers and drivers.
+- **Saved plans.** Validation recomputes the stored pickup sequence's cost and compares it with both the stored cost and the best-order cost. RT-08 now separates a committed replay from an unsaved old preview, which the existing `ALGORITHM_CHANGED` guard rejects.
+- **Oracle.** It returns the minimum cost at each passenger count, correcting RT-07.
+- **Credits.** Credits are predicted before dispatch, using square-block batching, and checked against a route-pricing allowance. Full mode is used when affordable. Otherwise economy mode applies, built on the student's proposal: it starts from the existing flow plan, regroups using zero-credit straight-line approximations calibrated from round-1 road times, fetches only each chosen car's k×k block, then prices and repairs.
+
+Economy mode is needed because pricing the flow plan alone keeps per-pair groupings: RT-01 would report the 10-minute split instead of the 7-minute pair.
+
+Checks, run offline in a scratch script:
+
+- RT-01 to RT-05 were rechecked by brute-force enumeration under rules 1–3, giving minimum cost per passenger count: RT-01 {1: 4, 2: 7} min, RT-02 {1: 5, 2: 12}, RT-03 {1: 5}, RT-04 4 before and after the withdrawal, RT-05 {1: 3, 2: 7}.
+- The RT-10 repair outcome is (2 placed, 12 min).
+- The credit table was computed with the documented formula: 63, 111 + 150, 570, 1,000, 388 and 250.
+- New anchors resolve.
+
+No code, build or provider call was involved. Allowance figures are predictions, not measurements. The student has not reviewed revision 2.
+
+### Reuse extension design proposal
+
+On 2026-11-26 the student asked Claude Code for a thorough design to reduce Geoapify credits by storing known places and driving times. The student expects trips to repeat locations. Earlier in the discussion, the student made these decisions:
+
+- cost is the current priority;
+- the route-based matcher redesign (section 12) is not being pursued now;
+- storing places and times is worth pursuing.
+
+The student also pointed out that the stored data need not link a person to an address.
+
+This was a documentation episode only; no application code, schema or tests changed. The design is [section 13](ARCHITECTURE-v2.md#13-proposed-reuse-of-known-places-and-driving-times).
+
+Claude Code drafted revision 1 after reading the search, selection, invite, routing-evidence, permit and reset code. An independent reviewer agent then checked revision 1 against the code without being told the expected conclusions, and reported 11 defects. Claude Code spot-checked the central claims in the code before revising:
+
+- `summarySchema` is strict, and the partition check covers only `fetched + reused + local`.
+- `needsLive` considers only ID and identical-coordinate matches.
+- The routing permit is keyed by trip.
+- `geoapify.ts` checks the abort signal before reporting observations.
+- Invite registration verifies tokens against the invite ID.
+- Reset uses a try-lock and refuses connected sessions.
+
+Revision 2 resolves all 11 defects (V1–V11 in section 13.11). The most important change is that a trip ID is no longer treated as an organizer credential. All reuse is scoped to a workspace cookie, because anyone who can reach the server can create a trip and would otherwise list saved participant addresses or probe routing history.
+
+Checks: the new anchors resolve, and the credit figures reuse the formula verified in the previous entry. No build, test or provider call was run. Revision 2 has not been independently re-reviewed, and the student has not reviewed it. ISSUE-109 to ISSUE-112 record the open decisions, measurements and privacy follow-up.
+
+### Technical review of reuse revision 2
+
+Reviewed section 13 against the existing trip, search, evidence, matrix and reset code. In an offline probe of the current matrix planner, 16 drivers needed the same final 20 pickups and four drivers needed all 50. The existing trip-local pickup batches cost 400 base credits. Resolving a different cell in each driver row from the workspace made the residual batches cost 500. A single covering rectangle also cost 500. Include the original trip-local batch plan among the alternatives and scope the guarantee to predicted base credits. The probe used fictional coordinates and no provider calls.
+
+Before C1, bind shared-cache reads, writes and provenance display to verified workspace ownership on the requested trip. Frozen ID-keyed evidence, caches shared by coordinate, and billed physical cells need distinct accounting. Before C2, require saved candidates to pass the numbered-address and locality checks before issuing fresh tokens. Before C3, define pass expiry on lookup, recovery after failed registration, and browser/server deletion on failed Forget. The review covers the proposed contracts; no application implementation or student approval was recorded.
+
+### Reuse design revision 3
+
+The student asked Claude Code to revise section 13 to address the technical review of revision 2. This was a documentation episode only; no code, schema or tests changed.
+
+Claude Code first confirmed the review's code claims:
+
+- The evidence validator caps durations at 1,000,000 seconds and 1,100 legs.
+- Stored snapshots combine house number and street in one line.
+- The wrong-building filter in `geoapify.ts` operates on structured provider fields.
+
+It also re-derived the counterexample with the documented formula: today's plan costs 400 (a 16×20 request plus a 4×50 request); the residual plan costs 500 (sixteen 1×19 requests plus four 1×49 requests); the covering plan costs 500. The 49→50 passenger case costs 21.
+
+Revision 3 ([section 13](ARCHITECTURE-v2.md#13-proposed-reuse-of-known-places-and-driving-times), W1–W12) makes these changes:
+
+- **Ownership.** The store is read and written only when the requester's session owns the trip, and provenance is redacted for non-owners on previews, stored winners and saved dashboards.
+- **Credits.** Today's request plan is always a candidate, so predicted base credits never exceed today's.
+- **Saved places.** Free text never yields a token. Saved places are selected by ID, and existing house-number and locality rules decide only whether a provider search is withheld.
+- **Provenance.** Per-leg origins go in evidence version 3, so commit can detect a shifted count. Physical cells and predicted credits are recorded separately.
+- **Retention.** Freshness and deletion ages are separate, with a global purge, a 1,000,000-second ceiling and repair of future-dated rows.
+- **Generation.** The dataset generation is captured and compared inside every delayed write.
+- **Passes.** Explicit lifecycle states, a default of off, and a test that no secret reaches logs or spans.
+- **Workspaces.** Established before any write, serialized across tabs, with ownership fixed in the trip transaction, and sessions that support rotation and revocation.
+
+Checks: the section 13 and EVIDENCE anchors resolve, and the four credit figures above were recomputed. No build, test or provider call was run. ISSUE-113 is set to needs verification, pending an independent review of revision 3. The student has not reviewed revision 3. The proposed defaults (30-day freshness, a 180-day pass, and passes off by default) await the ISSUE-109 and ISSUE-112 decisions.
+
+### Independent technical review of reuse revision 3
+
+Reviewed the proposed contracts against the current matrix batcher, evidence and summary validators, preview publication, commit guard and selection scope. Ran two offline Node 24 probes against the repository's `matrixBatches` with fictional points. Section 13 has no implementation to exercise. No application suite, database operation or provider request ran in this review.
+
+- **Predicted credits (SC-04).** P0 in 13.7 runs after the new trip-local coordinate lookup. Today's planner only reuses ID-keyed evidence and resolves identical endpoints. The difference matters even with an empty workspace store. In a 20×50 roster, let 16 existing drivers already have ID-keyed observations for the first 30 pickups. In four groups of four they also retain coordinates for the next one, two, three or four pickups respectively, now registered under fresh IDs. Such partial rows can be retained as drivers successively reduce capacity to zero and later restore it. Four new drivers have no observations. Today's pickup batches are 16×20 and 4×50, plus 24×1 to the venue, costing **424** base credits. Applying coordinate reuse first yields pickup batches 4×19, 4×18, 4×17, 4×16 and 4×50, plus 20×1 to the venue, costing **500**. A single covering rectangle for the pickup family plus the venue batch costs **520**. Include the actual pre-extension dispatch plan independently of both new sources of reuse. Apply evidence precedence when consuming its response.
+- **Summary validation (SC-03).** A fresh driver and two distinct passenger IDs at one pickup produced five logical provider legs but three requested cells (1×1 and 2×1). The proposed lower bound of five would reject a valid preview at Save. Count physical cells from dispatched rectangles and logical legs from required ID pairs. Use this cold case for publication, Save and reload. Classify carried identical-endpoint zeros consistently as local so a reused zero never implies a provider observation timestamp.
+- **Privacy through rematches (SC-02).** A stored estimate from last week has origin `store` when the owner first uses it and origin `trip` when a later preview inherits it by ID. The redacted range then includes last week's timestamp, even if this trip was created today. Even the first preview's merged reuse count and empty redacted range can disclose reuse. Use a non-owner response that omits observation and acquisition metadata on previews and saved dashboards, or track original provenance across generations and specify exactly what a non-owner may infer. Exercise at least two trip versions.
+- **Upgrade and selection.** SC-03 promises that a v2 preview can still be committed. The algorithm identifier embeds the evidence schema, and the current commit guard rejects a different identifier before reading evidence. Specify the accepted schema/algorithm/policy combinations and preserve the preview's actual identifier on Save. Test an unsaved v2 preview across the upgrade as well as replay of a completed receipt. For SC-11, select-by-ID resolves the `12` versus `112` token defect. Separate the workspace-only venue selection before a trip exists from participant selection on an owned trip. Require any supplied locality to agree before a saved venue name suppresses a paid search.
+- **Retention scope.** The proposed deletion ages concern reuse tables. Frozen trip evidence and attached addresses have separate existing retention. Global deletion in bounded batches at startup or on writes also gives eventual cleanup, with no hard deletion date while the server is idle. Specify the scope and any required cleanup schedule before the owner decides ISSUE-109/112.
+
+ISSUE-113 remains open for design corrections. Owner-only store access, explicit saved-place selection, generation checks on delayed writes and expiry checks before renewing passes are implementable using the current architecture. SC-13 and SC-14 can proceed independently. No owner decision or implementation signoff was inferred.
+
+### Reuse design revision 4
+
+The student asked Claude Code to address the four remaining gaps in the independent review of revision 3. This was a documentation episode only; no code, schema or tests changed.
+
+Claude Code confirmed the upgrade finding in the code:
+
+- `expectedAlgorithm` builds the address identifier from the solver, the evidence schema and the routing policy.
+- Save rejects any preview whose identifier differs (`src/trips/commit.ts`).
+- Save records the current identifier rather than the preview's own.
+
+It also checked the shared-address arithmetic: one driver and two co-located passengers need 5 required legs (keyed by location ID) but 3 coordinate-deduplicated cells. The 424-versus-500/520 coordinate-reuse counterexample is taken from the reviewer's offline probe and was not re-derived here.
+
+Revision 4 ([section 13](ARCHITECTURE-v2.md#13-proposed-reuse-of-known-places-and-driving-times), X1–X6) makes these changes:
+
+- **Credits.** The guaranteed plan P0 is computed by today's rules alone, before coordinate or store reuse.
+- **Validation.** Physical request metrics are recorded as dispatched shapes and validated only against the credit formula, with no rule relating cells to fetched legs. A cold shared-address round trip is added as SC-16.
+- **Non-owners.** They see the plan, detours and attribution, but no origin counts, request or credit metrics, or observation dates, on any trip version, stored winner or saved plan. SC-02 now spans two versions and a reload.
+- **Upgrade.** A committable-identifier set keeps version-2 previews saveable after the upgrade, and Save records the preview's own identifier. SC-03 exercises a real pending preview across the upgrade.
+- **Smaller changes.** Saved venues can be selected before a trip exists. A supplied locality must match before a saved name withholds the provider. Deletion ages are stated to cover only the reuse tables, with no fixed date while the app is idle.
+
+Checks: the new anchors resolve. No build, test or provider call was run. ISSUE-113 is set to needs verification, pending an independent review of revision 4. The student has not reviewed revision 4.
+
+### Independent technical review of reuse revision 4
+
+Reviewed X1–X6 against the proposed migration and the current batcher, commit path, summary serializer, venue-token scope and locality matcher. An offline Node 24 probe called the repository functions with fictional inputs. SC-02, SC-03, SC-04 and SC-16 are proposed acceptance checks for the feature. No database, provider, build or browser run was part of this review.
+
+| Item | Review result |
+|---|---|
+| X1 · Credit bound | Recomputed P0/P1/P2 as 400/500/500 for scattered store hits and 424/500/520 for coordinate-only hits, using the revision-3 review roster. Both now choose P0. Including the pre-extension batches in the same minimum establishes the predicted base-credit bound for the same input and available ID-keyed evidence, including any eligible permit handoff. |
+| X2 · Shared pickup | The current batcher expanded three physical cells to five required ID-keyed legs. Recording the two rectangle shapes (1×1 and 2×1) yields three predicted base credits. The revised Save rule accepts that accounting. |
+| X3 · Non-owner display | Omitting acquisition metadata closes the original two-version disclosure while the trip has an owner. The proposed migration at 13.5 uses `ON DELETE SET NULL` on the trip's workspace. After the 365-day workspace purge, an originally owned trip with retained store-derived evidence looks like a pre-feature trip under the ownerless exception in 13.3. Its saved plan can expose observation dates again. Preserve an immutable distinction for trips created before migration, or redact acquisition metadata on every ownerless trip. Extend SC-02 to expire the workspace of a saved trip, read its stored preview and dashboard, and compare with a genuine pre-feature trip. |
+| X4 · Upgrade | The proposed allowlist matches the exact identifier emitted by today's code. Saving the preview's original identifier preserves the pending v2 workflow. An actual summary returned by the current serializer has **no** `version` property. Decode that legacy shape explicitly, and bind each accepted algorithm identifier to its own evidence and summary formats so a v3 row cannot opt into the weaker v2 check. Exercise the recorded pending-preview case using the unmodified legacy payload. |
+| X5 · Venue selection | Null scope matches the existing venue creation path. The current locality helper rejected a saved Dallas venue for an Austin, TX locality and accepted an Austin venue with state Texas. The revised name rule defines the no-locality duplicate case and keeps selection explicit by ID. |
+| X6 · Retention | The revised design separates reuse-table cleanup from retained trip data and discloses idle-server retention. The 1,000-row limit per table means the next startup or reuse write **starts** cleanup. A backlog may need several passes. |
+
+ISSUE-113 remains open for the X3 workspace-deletion case. C0 measurements can proceed. The live-reuse and guest-pass decisions remain with the owner. No application behavior or proposal text changed during this review.
+
+### Reuse implementation planning
+
+The student requested implementation steps for section 13. The workplan now maps REUSE-0–REUSE-4 to code entry points, dependencies and observable acceptance checks. The architecture adopts the simpler ISSUE-113 rule from the revision 4 review. A verified workspace owner can see acquisition metadata. A pre-migration trip and a trip whose workspace was purged both retain the plan, detours and attribution. SC-02 covers both ownerless cases. ISSUE-113 awaits verification through the implemented preview and dashboard routes.
+
+Documentation checks verified the workplan and handoff links, coverage of SC-01 through SC-16, and both ownerless-trip cases in SC-02. The working diff passed the whitespace check. REUSE-0 measurements, REUSE-1–REUSE-4 implementation and their runtime checks remain pending. ISSUE-109 governs live cross-trip retention and ISSUE-112 governs guest passes. Student inspection is pending. [Workplan steps](../WORKPLAN.md#implementation-steps-for-reusable-places-and-driving-times) · [Design review](#independent-technical-review-of-reuse-revision-4)
+
+### Reuse checkpoint names and issue register audit
+
+The reuse extension now uses REUSE-0 through REUSE-4. Earlier reuse design reviews used C0–C4 for these same five steps. Earlier address checkpoint C, its C1–C3 work items and the SC acceptance identifiers retain their original meanings.
+
+The register contains 113 consecutive issue IDs. Recorded states are 97 closed, 14 open, one deferred (ISSUE-004) and one awaiting verification (ISSUE-113). The audit checked the IDs, states, evidence references and next actions against the current design and recorded reviews. Five older evaluation rows needed their evidence moved into the resolution column. The ISSUE-103 row now places the verified replay outcome there as well.
+
+ISSUE-108 spans two proposals. REUSE-1.2 addresses new shared pickups and RT1 covers conflicting legacy observations. ISSUE-109 and ISSUE-112 still require owner decisions. ISSUE-110 still requires measurements. ISSUE-111 and ISSUE-113 require evidence from the implemented workspace and preview routes. The guest workflow fixes through ISSUE-103 have recorded verification in the code shipped in `5c42e9b`. The environment reports for ISSUE-001 and ISSUE-003 remain scoped to the restricted workspace. This was a records audit. Application suites, environment access and provider calls were outside its scope.
+
 ## Checkpoint D pilot preparation
 
 The student asked Codex to proceed from committed C (`2b50353`). This episode covers D1 attribution on suggestions, previews and saved estimates, and preparing the Geoapify search path against fictional provider responses. Live L-19 measurements depend on the owner’s L-18 project and credit confirmation. Student inspection is pending.
