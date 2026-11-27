@@ -50,7 +50,7 @@ import { computeAddressPreview, type AddressPreviewComputation } from "./address
 import * as repo from "./repository.ts";
 import { hasWorkspaceSession } from "../workspaces/service.ts";
 import {
-  missingTravelPairs, persistTravelBatch, readDatasetGeneration, readTravelTimes,
+  isCoordinateCopy, missingTravelPairs, persistTravelBatch, readDatasetGeneration, readTravelTimes,
   reuseTripCoordinates, travelTimeMaxAgeDays, travelTimeWriteBudgetMs, type TravelTimeWriteScope,
 } from "./travel-times.ts";
 
@@ -323,6 +323,7 @@ async function publishPreviewInner(
     let roster: Roster | undefined;
     let addressRoster: AddressRoster | undefined;
     let candidate: Map<string, Leg> | null | undefined;
+    let baselineKnown: Set<string> | undefined;
     const workspaceLegs = new Map<string, Leg>();
     let travelScope: TravelTimeWriteScope | undefined;
     let historicalPoints: AddressPoint[] = [];
@@ -351,6 +352,7 @@ async function publishPreviewInner(
           client, tripId, trip.version, addressRoster, policyId, locationHistorySince,
         ));
         const required = requiredPairs(addressRoster);
+        if (livePolicy) baselineKnown = new Set(candidate?.keys());
         if (candidate) reuseTripCoordinates(addressRoster, retentionPairs(addressRoster), candidate, historicalPoints);
 
         const missing = missingTravelPairs(required, candidate ?? new Map());
@@ -365,7 +367,7 @@ async function publishPreviewInner(
         roster = await readRoster(client, tripId);
       }
     }
-    return { version: trip.version, algorithm, existing, hit, roster, addressRoster, provider, livePolicy, candidate, workspaceLegs, travelScope, historicalPoints };
+    return { version: trip.version, algorithm, existing, hit, roster, addressRoster, provider, livePolicy, candidate, baselineKnown, workspaceLegs, travelScope, historicalPoints };
   }, deadline).catch(error => {
     releaseLookup?.();
     throw error;
@@ -423,6 +425,9 @@ async function publishPreviewInner(
       } else {
         const retainedPairs = retentionPairs(addressRoster);
         const retained = new Set(retainedPairs.map(({ from, to }) => legKey(from.id, to.id)));
+        for (const [key, leg] of settled) {
+          if (retained.has(key) && !isCoordinateCopy(leg)) snapshot.baselineKnown?.add(key);
+        }
         const merged = new Map([...settled, ...candidate]);
         reuseTripCoordinates(addressRoster, retainedPairs, merged, snapshot.historicalPoints);
         settled.clear();
@@ -456,6 +461,7 @@ async function publishPreviewInner(
             provider,
             signal: routingSignal,
             settled: holder?.settled,
+            baselineKnown: snapshot.baselineKnown,
             recordBatch: travelScope ? batch => { observations.push(...batch); } : undefined,
             policyId: routingPolicyFor(provider),
             // Built lazily: a rematch that needs no new observation never touches routing,
@@ -488,7 +494,7 @@ async function publishPreviewInner(
     }
     controller?.signal.throwIfAborted();
     deadline.remaining();
-    recordPreview({ cacheHit: false, matcherMs: Number(matcherMs.toFixed(3)) });
+    recordPreview({ cacheHit: false, matcherMs: Number(matcherMs.toFixed(3)), matrix: addressResult?.matrix });
     if (computation.algorithmVersion !== snapshot.algorithm) {
       // The computed identifier and the key looked up under the lock must agree.
       throw new Error("Computed preview identifier does not match the trip's expected identifier.");

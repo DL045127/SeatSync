@@ -1,7 +1,7 @@
 // Compute an address preview from frozen durations (docs/ARCHITECTURE-v2.md
 // sections 5 and 6): carry over the still-relevant observations of an earlier
-// preview, resolve identical endpoints locally, fetch ONLY the required legs
-// that are still missing, project edges, run the same exact and greedy
+// preview, resolve identical endpoints locally, fetch missing legs with a
+// credit-bounded matrix plan, project edges, run the same exact and greedy
 // matchers, and assemble the evidence and public summary.
 //
 // The routing adapter is touched only when something must actually be fetched.
@@ -13,6 +13,7 @@ import {
   type AddressRoster,
   type DirectedPair,
   type Leg,
+  identicalCoordinates,
   legKey,
   projectAddressMatchInput,
   requiredPairs,
@@ -21,6 +22,7 @@ import {
 } from "../matching/address.ts";
 import type { ProviderName } from "../locations/snapshot.ts";
 import { validateCells, type RoutingAdapter } from "../routing/index.ts";
+import { planMatrix, type MatrixPrediction } from "../routing/matrix.ts";
 import {
   type AddressEvidence,
   type EstimateSummary,
@@ -37,6 +39,8 @@ export interface LegSource {
   adapter: () => RoutingAdapter;
   signal?: AbortSignal;
   settled?: Map<string, Leg>;
+  /** Required legs that already had an ID match before coordinate and workspace reuse. */
+  baselineKnown?: ReadonlySet<string>;
   recordBatch?: (observations: ReadonlyArray<{ pair: DirectedPair; leg: Leg }>) => void;
 }
 
@@ -46,8 +50,9 @@ export interface AddressPreviewComputation {
   greedy: MatchingResult;
   evidence: AddressEvidence;
   summary: EstimateSummary;
-  /** Provider cells requested for this preview (zero when everything was carried or local). */
+  /** Logical misses filled by routing. A matrix can bill more or fewer physical cells. */
   fetchedCells: number;
+  matrix?: MatrixPrediction;
   matcherMs: number;
 }
 
@@ -82,27 +87,36 @@ export async function computeAddressPreview(
     else toFetch.push(pair);
   }
 
+  const matrix = source.provider === "geoapify" && source.baselineKnown
+    ? planMatrix(required, required.filter(({ from, to }) =>
+      !source.baselineKnown!.has(legKey(from.id, to.id)) && !identicalCoordinates(from, to)), toFetch, roster.venue)
+    : undefined;
   // Never fetch to fill a dormant driver's row: only REQUIRED legs reach here.
   if (toFetch.length > 0) {
     const adapter = source.adapter();
+    const requested = matrix?.pairs ?? toFetch;
     const batchTimes = new Map<number, string>();
-    const cells = validateCells(await adapter.fetchLegs(toFetch, {
+    const cells = validateCells(await adapter.fetchLegs(requested, {
       venueId: roster.venue.id,
       signal: source.signal,
+      batches: matrix?.batches,
       onBatch: (observations, observedAt) => {
         const batch = observations.map(({ index, seconds }) => {
           batchTimes.set(index, observedAt);
-          const pair = toFetch[index];
+          const pair = requested[index];
           const leg: Leg = { from: pair.from.id, to: pair.to.id, seconds, observedAt, source: "provider" };
-          source.settled?.set(legKey(leg.from, leg.to), leg);
+          const key = legKey(leg.from, leg.to);
+          if (!legs.has(key)) source.settled?.set(key, leg);
           return { pair, leg };
         });
         source.recordBatch?.(batch);
       },
-    }), toFetch.length);
+    }), requested.length);
     const observedAt = now().toISOString();
-    toFetch.forEach((pair, index) => {
-      legs.set(legKey(pair.from.id, pair.to.id), {
+    requested.forEach((pair, index) => {
+      const key = legKey(pair.from.id, pair.to.id);
+      if (legs.has(key)) return;
+      legs.set(key, {
         from: pair.from.id,
         to: pair.to.id,
         seconds: cells[index],
@@ -131,6 +145,7 @@ export async function computeAddressPreview(
     evidence,
     summary,
     fetchedCells: toFetch.length,
+    matrix: matrix?.prediction,
     matcherMs,
   };
 }

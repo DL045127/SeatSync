@@ -53,7 +53,7 @@ export function geoapifyRoutingAdapter(options: AdapterOptions = {}): RoutingAda
       const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
       const cells = new Array<number | null>(pairs.length);
       try {
-        for (const batch of matrixBatches(pairs, request.venueId)) {
+        for (const batch of request.batches ?? matrixBatches(pairs, request.venueId)) {
           await limit.acquire(signal);
           const response = await requestProviderJson(url, signal, JSON.stringify({
             ...profile,

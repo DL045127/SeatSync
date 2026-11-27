@@ -9,9 +9,12 @@ import { PreviewDeadline } from "../../src/db/deadline.ts";
 import { __setTransactionCommitFaultHook } from "../../src/db/transaction.ts";
 import * as permits from "../../src/trips/routing-permit.ts";
 import * as travelTimes from "../../src/trips/travel-times.ts";
-import { legKey, type Leg } from "../../src/matching/address.ts";
+import * as telemetry from "../../src/trips/preview-telemetry.ts";
+import { legKey, requiredPairs, type AddressPoint, type AddressRoster, type Leg } from "../../src/matching/address.ts";
+import { planMatrix } from "../../src/routing/matrix.ts";
+import { computeAddressPreview } from "../../src/trips/address-preview.ts";
 import { addressCounters, resetAddressCounters } from "../../src/trips/address-metrics.ts";
-import { editDriver, getTripSnapshot } from "../../src/trips/service.ts";
+import { editDriver, editRequest, getTripSnapshot } from "../../src/trips/service.ts";
 import { commitPreview } from "../../src/trips/commit.ts";
 import { runPreview } from "../../src/app/api/http.ts";
 import { createPool } from "../../src/db/pool.ts";
@@ -21,7 +24,7 @@ import { __setRoutingAdapterForTests, routingPolicyFor } from "../../src/routing
 import { __setPublishBarrier, publishPreview } from "../../src/trips/preview.ts";
 import {
   APP, SETUP, addSyntheticDriver, addSyntheticPassenger, createSyntheticTrip,
-  resetTestDatabase, spots, useFixtureEnvironment, type FixtureEnv,
+  mint, resetTestDatabase, spots, useFixtureEnvironment, type FixtureEnv,
 } from "./helpers/address.ts";
 
 type Waypoint = { location: [number, number] };
@@ -38,6 +41,106 @@ const times = new Map([
   [JSON.stringify([waypoint(driver), waypoint(venue)]), 519.5],
   [JSON.stringify([waypoint(pickup), waypoint(venue)]), 346.75],
 ]);
+
+test.each([
+  { name: "scattered workspace hits", credits: [400, 500, 500], chosen: "P0", requests: [[16, 20], [4, 50]] },
+  { name: "coordinate reuse with empty store", credits: [424, 500, 520], chosen: "P0", requests: [[14, 26], [6, 24], [20, 1]] },
+  { name: "aligned workspace hits", credits: [500, 480, 480], chosen: "P1", requests: [[20, 48]] },
+  { name: "fragmented workspace hits", credits: [500, 546, 400], chosen: "P2", requests: [[14, 40]] },
+] as const)("SC-04: dispatches the lowest-credit rectangles for $name", async ({ name, credits, chosen, requests }) => {
+  const asPoint = (spot: typeof venue): AddressPoint => ({ ...spot, id: randomUUID(), providerRef: spot.ref });
+  const starts = spots("pricing-driver", 20, 200).map(asPoint);
+  const pickups = spots("pricing-pickup", 50, 250).map(asPoint);
+  const roster: AddressRoster = {
+    venue: asPoint(venue),
+    drivers: starts.map(location => ({ id: randomUUID(), active: true, seatCapacity: 2, maxDetourMinutes: 15, location })),
+    passengers: pickups.map(location => ({ id: randomUUID(), active: true, location })),
+  };
+  const required = requiredPairs(roster);
+  const baselineKnown = new Set<string>();
+  const trip = new Map<string, Leg>();
+  const history: AddressPoint[] = [];
+  const workspace = new Map<string, Leg>();
+  const observedAt = "2026-11-24T00:00:00.000Z";
+  for (const { from, to } of required) {
+    const i = starts.indexOf(from);
+    const j = pickups.indexOf(to);
+    const key = legKey(from.id, to.id);
+    const observation: Leg = { from: from.id, to: to.id, seconds: 60, source: "provider", observedAt };
+    const knownById = j < 0
+      ? name !== "coordinate reuse with empty store" || i < 0
+      : (name === "scattered workspace hits" && i < 16 && j >= 20)
+        || (name === "coordinate reuse with empty store" && (i < 14 ? j >= 26 : j < 26));
+    if (knownById) {
+      baselineKnown.add(key);
+      trip.set(key, observation);
+    } else if (name === "coordinate reuse with empty store" && j >= 0) {
+      const localColumn = i < 14 ? j : j - 26;
+      if (localColumn === i || (i < 8 && localColumn === i + 14)) {
+        const old = { ...to, id: randomUUID() };
+        history.push(old);
+        trip.set(legKey(from.id, old.id), { ...observation, to: old.id, seconds: null });
+      }
+    } else if (j >= 0 && (
+      (name === "scattered workspace hits" && j === i)
+      || (name === "aligned workspace hits" && j >= 48)
+      || (name === "fragmented workspace hits" && (i >= 14 || j >= 40 || j === i))
+    )) {
+      workspace.set(key, observation);
+    }
+  }
+  const baseline = travelTimes.missingTravelPairs(required, new Map([...trip].filter(([key]) => baselineKnown.has(key))));
+  travelTimes.reuseTripCoordinates(roster, required, trip, history);
+  const candidate = new Map([...workspace, ...trip]);
+  const misses = travelTimes.missingTravelPairs(required, candidate);
+  const selection = planMatrix(required, baseline, misses, roster.venue);
+  expect(["P0", "P1", "P2"].map(id => selection.alternatives.find(p => p.plan === id)?.predictedBaseCredits))
+    .toEqual(credits);
+
+  stub.respondWith((res, body) => {
+    const response = matrix(body);
+    for (const row of response.sources_to_targets) for (const cell of row) cell.time = 120;
+    res.end(JSON.stringify(response));
+  });
+  const adapter = geoapifyRoutingAdapter({ endpoint: stub.endpoint, apiKey: "stub-key", limit: new GeoapifyRateLimit() });
+  const refreshed = new Map<string, Leg>();
+  const settled = new Map<string, Leg>();
+  const result = await computeAddressPreview(roster, {
+    provider: "geoapify", policyId: adapter.policyId, adapter: () => adapter, baselineKnown, settled,
+    recordBatch: batch => {
+      for (const { leg } of batch) refreshed.set(legKey(leg.from, leg.to), leg);
+    },
+  }, candidate);
+  const actualShapes = stub.calls.map(({ body }) => [body.sources.length, body.targets.length]);
+  expect(actualShapes).toEqual(requests);
+  const dispatched = new Set(stub.calls.flatMap(({ body }) => body.sources
+    .flatMap(from => body.targets.map(to => JSON.stringify([from.location, to.location])))));
+  for (const { from, to } of misses) {
+    expect(dispatched.has(JSON.stringify([[from.lon, from.lat], [to.lon, to.lat]]))).toBe(true);
+  }
+  for (const [sources, targets] of actualShapes) expect(sources * targets).toBeLessThanOrEqual(1000);
+  const baseCredits = actualShapes.reduce((sum, [sources, targets]) =>
+    sum + (sources > targets ? sources * Math.min(targets, 10) : targets * Math.min(sources, 10)), 0);
+  expect(result.matrix).toEqual({
+    plan: chosen, requests: actualShapes, predictedBaseCredits: baseCredits,
+    cells: actualShapes.reduce((sum, [sources, targets]) => sum + sources * targets, 0),
+  });
+  expect(baseCredits).toBeLessThanOrEqual(credits[0]);
+  const stored = new Map(result.evidence.legs.map(leg => [legKey(leg.from, leg.to), leg]));
+  for (const { from, to } of misses) expect(stored.get(legKey(from.id, to.id))?.seconds).toBe(120);
+  let refetched = 0;
+  for (const [key, leg] of candidate) {
+    if (!stored.has(key)) continue;
+    expect(stored.get(key)).toEqual(leg);
+    expect(settled.has(key)).toBe(false);
+    if (refreshed.has(key)) {
+      refetched++;
+      expect(refreshed.get(key)?.seconds).toBe(120);
+    }
+  }
+  expect(refetched).toBe(name === "aligned workspace hits" ? 0
+    : name === "scattered workspace hits" ? 20 : name === "fragmented workspace hits" ? 14 : 28);
+});
 
 function matrix(body: RequestBody) {
   return {
@@ -710,13 +813,18 @@ test("SC-01: workspace-covered loopback preview sends no matrix request and take
   expect((await publishPreview(pool, tripId, undefined, owner.secret)).body.optimal.totalCost).toBe(231);
   expect(stub.calls).toHaveLength(2);
   const admission = vi.spyOn(permits, "acquireRouting");
+  const recording = vi.spyOn(telemetry, "recordPreview");
   try {
     const warmed = await publishPreview(pool, second, undefined, owner.secret);
     expect(warmed.body).toMatchObject({ optimal: { matchedCount: 1, totalCost: 231 }, estimate: { legs: { reused: 3, fetched: 0 } } });
     expect(stub.calls).toHaveLength(2);
     expect(admission).not.toHaveBeenCalled();
+    expect(recording).toHaveBeenLastCalledWith(expect.objectContaining({
+      matrix: { plan: "P1", requests: [], cells: 0, predictedBaseCredits: 0 },
+    }));
   } finally {
     admission.mockRestore();
+    recording.mockRestore();
   }
 
   // The default live adapter cannot use the populated workspace store. Disable
@@ -793,6 +901,215 @@ test("ISSUE-123: a pickup at the venue shares a directed observation on cold and
   expect(legs).toHaveLength(2);
   expect(legs.map(leg => leg.seconds)).toEqual([1519.5, 1519.5]);
   expect(new Set(legs.map(leg => leg.observedAt)).size).toBe(1);
+});
+
+test("SC-04 / ISSUE-131: a pickup at the venue keeps the 181-credit baseline", async () => {
+  const owner = await bootstrapWorkspace(pool);
+  const starts = spots("baseline-driver", 20, 300);
+  const pickups = spots("baseline-pickup", 16, 400);
+  const admin = createPool(SETUP, 1);
+  const telemetrySpy = vi.spyOn(telemetry, "recordPreview");
+  vi.stubEnv("GROUPRIDE_TRAVEL_TIMES_MAX_AGE_DAYS", "0");
+  try {
+    process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+    const id = await createSyntheticTrip(pool, venue);
+    const drivers = [];
+    for (const [index, spot] of starts.slice(0, 13).entries()) {
+      drivers.push(await addSyntheticDriver(pool, id, `Driver ${index + 1}`, spot, 1));
+    }
+    const temporary = await addSyntheticPassenger(pool, id, "Temporary pickup", pickups[0]);
+    const version = async () => (await pool.query<{ version: number }>(
+      "SELECT version FROM trips WHERE id=$1", [id],
+    )).rows[0].version;
+    const seats = async (driverId: string, seatCapacity: number) => {
+      const result = await editDriver(pool, id, driverId, randomUUID(), { baseVersion: await version(), seatCapacity });
+      expect(result.httpStatus).toBe(200);
+    };
+    const switchToFixture = async () => {
+      process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+      await admin.query("UPDATE trips SET venue_location=venue_location || $2::jsonb WHERE id=$1",
+        [id, { provider: "fixture" }]);
+    };
+    const route = async () => {
+      await pinToWorkspace(id, owner.id);
+      process.env.GROUPRIDE_ADDRESS_PROVIDER = "geoapify";
+      const result = await publishPreview(pool, id);
+      await switchToFixture();
+      return result;
+    };
+    stub.respondWith((res, body) => {
+      const response = matrix(body);
+      for (const row of response.sources_to_targets) for (const cell of row) cell.time = 60;
+      res.end(JSON.stringify(response));
+    });
+    await route();
+    for (const driverId of drivers.slice(0, 7)) await seats(driverId, 0);
+    const reselected = await addSyntheticPassenger(pool, id, "Reselected pickup", pickups[1]);
+    await route();
+    for (const driverId of drivers.slice(7)) await seats(driverId, 0);
+    for (const [index, spot] of starts.slice(13, 19).entries()) {
+      await addSyntheticDriver(pool, id, `Driver ${index + 14}`, spot, 1);
+    }
+    for (const [index, spot] of pickups.slice(2, 15).entries()) {
+      await addSyntheticPassenger(pool, id, `Pickup ${index + 1}`, spot);
+    }
+    await route();
+    expect((await editRequest(pool, id, temporary, randomUUID(), { baseVersion: await version(), active: false })).httpStatus).toBe(200);
+    expect((await editRequest(pool, id, reselected, randomUUID(), {
+      baseVersion: await version(),
+      details: { name: "Reselected pickup", pickupSelectionToken: await mint(pool, "pickup", id, pickups[1]) },
+    })).httpStatus).toBe(200);
+    const atVenue = await addSyntheticPassenger(pool, id, "At the venue", venue);
+    await addSyntheticPassenger(pool, id, "Another pickup", pickups[15]);
+    const newestDriver = await addSyntheticDriver(pool, id, "Driver 20", starts[19], 1);
+    for (const driverId of drivers) await seats(driverId, 1);
+
+    await pinToWorkspace(id, owner.id);
+    process.env.GROUPRIDE_ADDRESS_PROVIDER = "geoapify";
+    // Overlapping physical cells in P0 return different values. The pickup
+    // and direct leg must both keep the first observation.
+    stub.calls.length = 0;
+    stub.respondWith((res, body) => {
+      const response = matrix(body);
+      for (const row of response.sources_to_targets) for (const cell of row) cell.time = body.targets.length === 1 ? 180 : 60;
+      res.end(JSON.stringify(response));
+    });
+    const result = await publishPreview(pool, id);
+    const shapes = stub.calls.map(({ body }) => [body.sources.length, body.targets.length]);
+    expect([...shapes].sort(([a], [b]) => b - a)).toEqual([[14, 16], [6, 3], [3, 1]]);
+    const credits = shapes.reduce((sum, [s, t]) => sum + Math.max(s, t) * Math.min(s, t, 10), 0);
+    expect(credits).toBe(181);
+    expect(telemetrySpy).toHaveBeenLastCalledWith(expect.objectContaining({
+      matrix: { plan: "P0", requests: shapes, cells: 245, predictedBaseCredits: credits },
+    }));
+    const { evidence } = (await pool.query("SELECT evidence FROM match_previews WHERE id=$1", [result.body.previewId])).rows[0];
+    const start = evidence.drivers.find((entry: { id: string }) => entry.id === newestDriver).location.id;
+    const pickupId = evidence.passengers.find((entry: { id: string }) => entry.id === atVenue).location.id;
+    const colocated = (evidence.legs as Leg[]).filter(leg => leg.from === start
+      && (leg.to === pickupId || leg.to === evidence.venue.id));
+    expect(colocated).toHaveLength(2);
+    expect(colocated.map(leg => leg.seconds)).toEqual([60, 60]);
+    expect(new Set(colocated.map(leg => leg.observedAt)).size).toBe(1);
+    expect((await commitPreview(pool, id, randomUUID(), { previewId: result.body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, id)).toMatchObject({ totals: {
+      matched: result.body.optimal.matchedCount, totalCost: result.body.optimal.totalCost,
+    } });
+  } finally {
+    telemetrySpy.mockRestore();
+    vi.unstubAllEnvs();
+    await admin.end();
+  }
+});
+
+test.each([false, true])("SC-04 / ISSUE-132: a coordinate handoff preserves the 182-credit baseline (intermediate: %s)", async overlap => {
+  const owner = await bootstrapWorkspace(pool);
+  const starts = spots("handoff-driver", 14, 540);
+  const pickups = spots("handoff-pickup", 24, 560);
+  const admin = createPool(SETUP, 1);
+  const recording = vi.spyOn(telemetry, "recordPreview");
+  const oldVenue = barrier();
+  const middleFirst = barrier();
+  let phase: "initial" | "old" | "middle" | "final" = "initial";
+  let old: Promise<Response> | undefined;
+  let middle: Promise<Response> | undefined;
+  vi.stubEnv("GROUPRIDE_TRAVEL_TIMES_MAX_AGE_DAYS", "0");
+  try {
+    process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+    const id = await createSyntheticTrip(pool, venue);
+    const drivers = [];
+    for (const [index, spot] of starts.slice(0, 12).entries()) {
+      drivers.push(await addSyntheticDriver(pool, id, `Driver ${index + 1}`, spot, 1));
+    }
+    for (const [index, spot] of pickups.slice(0, 12).entries()) {
+      await addSyntheticPassenger(pool, id, `Pickup ${index + 1}`, spot);
+    }
+    const version = async () => (await pool.query<{ version: number }>(
+      "SELECT version FROM trips WHERE id=$1", [id],
+    )).rows[0].version;
+    const seats = async (driverId: string, seatCapacity: number) => {
+      expect((await editDriver(pool, id, driverId, randomUUID(), {
+        baseVersion: await version(), seatCapacity,
+      })).httpStatus).toBe(200);
+    };
+    const switchToFixture = async () => {
+      process.env.GROUPRIDE_ADDRESS_PROVIDER = "fixture";
+      await admin.query("UPDATE trips SET venue_location=venue_location || $2::jsonb WHERE id=$1",
+        [id, { provider: "fixture" }]);
+    };
+    const startLive = async () => {
+      await pinToWorkspace(id, owner.id);
+      process.env.GROUPRIDE_ADDRESS_PROVIDER = "geoapify";
+    };
+    stub.respondWith((res, body) => {
+      if (phase === "old" && body.targets.some(target => JSON.stringify(target) === JSON.stringify(waypoint(venue)))) {
+        oldVenue.open();
+        return;
+      }
+      if (phase === "middle") {
+        middleFirst.open();
+        return;
+      }
+      const response = matrix(body);
+      for (const row of response.sources_to_targets) for (const cell of row) cell.time = 120;
+      res.end(JSON.stringify(response));
+    });
+    await startLive();
+    await publishPreview(pool, id);
+    await switchToFixture();
+    for (const driverId of drivers.slice(0, 6)) await seats(driverId, 0);
+    const rider = await addSyntheticPassenger(pool, id, "Reselected pickup", pickups[12]);
+    await startLive();
+    phase = "old";
+    const oldAt = stub.calls.length;
+    old = runPreview(() => publishPreview(pool, id));
+    await oldVenue.reached;
+    expect(stub.calls.slice(oldAt).map(({ body }) => [body.sources.length, body.targets.length])).toEqual([[6, 1], [1, 1]]);
+    await switchToFixture();
+    expect((await editRequest(pool, id, rider, randomUUID(), {
+      baseVersion: await version(),
+      details: { name: "Reselected pickup", pickupSelectionToken: await mint(pool, "pickup", id, pickups[12]) },
+    })).httpStatus).toBe(200);
+    for (const driverId of drivers.slice(0, 6)) await seats(driverId, 1);
+    for (const [index, spot] of starts.slice(12).entries()) {
+      await addSyntheticDriver(pool, id, `Driver ${index + 13}`, spot, 1);
+    }
+    for (const [index, spot] of pickups.slice(13).entries()) {
+      await addSyntheticPassenger(pool, id, `Pickup ${index + 14}`, spot);
+    }
+    await startLive();
+    if (overlap) {
+      phase = "middle";
+      middle = runPreview(() => publishPreview(pool, id));
+      await middleFirst.reached;
+    }
+    await seats(drivers[0], 2);
+    phase = "final";
+    const finalAt = stub.calls.length;
+    const result = await publishPreview(pool, id);
+    for (const superseded of [old, middle]) {
+      if (superseded) {
+        const response = await superseded;
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ error: { code: "STALE_VERSION" } });
+      }
+    }
+    const shapes = stub.calls.slice(finalAt).map(({ body }) => [body.sources.length, body.targets.length]);
+    const credits = shapes.reduce((sum, [s, t]) => sum + Math.max(s, t) * Math.min(s, t, 10), 0);
+    expect(credits).toBe(182);
+    expect([...shapes].sort(([a], [b]) => b - a)).toEqual([[14, 1], [12, 12], [2, 24]]);
+    expect(recording).toHaveBeenLastCalledWith(expect.objectContaining({
+      matrix: { plan: "P0", requests: shapes, cells: 206, predictedBaseCredits: 182 },
+    }));
+    expect(result.body.optimal).toMatchObject({ matchedCount: 15, totalCost: 1800 });
+    expect(result.body.estimate?.legs.reused).toBe(174); // 168 published legs and six coordinate copies
+    expect((await commitPreview(pool, id, randomUUID(), { previewId: result.body.previewId })).httpStatus).toBe(200);
+    expect(await getTripSnapshot(pool, id)).toMatchObject({ totals: { matched: 15, totalCost: 1800 } });
+  } finally {
+    await admin.end();
+    await Promise.allSettled([old, middle]);
+    recording.mockRestore();
+    vi.unstubAllEnvs();
+  }
 });
 
 test("ISSUE-125: an in-flight preview hands off completed estimates to a co-located rider", async () => {

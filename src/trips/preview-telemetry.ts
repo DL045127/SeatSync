@@ -10,10 +10,12 @@
 // black-box HTTP client cannot see. The eval route drains these records.
 
 import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
+import type { MatrixPrediction } from "../routing/matrix.ts";
 
 export interface PreviewTelemetryRecord {
   cacheHit: boolean;
   matcherMs: number | null; // null on a cache hit (no computation ran)
+  matrix?: MatrixPrediction;
 }
 
 let enabled = false;

@@ -7,6 +7,7 @@
 
 import type { DirectedPair } from "../matching/address.ts";
 import type { ProviderName } from "../locations/snapshot.ts";
+import type { MatrixBatch } from "./matrix.ts";
 
 export interface ObservedCell {
   index: number;
@@ -16,6 +17,8 @@ export interface ObservedCell {
 export interface RoutingRequest {
   venueId: string;
   signal?: AbortSignal;
+  /** Geoapify rectangles indexed into the pair list, including billable padding. */
+  batches?: readonly MatrixBatch[];
   /** A batch has been fully decoded. Indexes refer to the original pair list. */
   onBatch?: (cells: readonly ObservedCell[], observedAt: string) => void;
 }

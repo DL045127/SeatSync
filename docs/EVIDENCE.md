@@ -812,6 +812,88 @@ Seven supplemental probes ran against real PostgreSQL in an isolated copy of the
 
 Independent verification passed all 333 PostgreSQL tests, all 51 Chromium workflows against an isolated production build, lint, typecheck, 471 unit tests, 71 matching tests and two setup checks. The review used the designated test database with fictional fixture and loopback providers and made zero live Geoapify requests. No additional correctness finding arose. ISSUE-130 and REUSE-1.2 pass independent technical review. REUSE-1.3 credit planning is next. The owner’s live-retention decision under ISSUE-109 and student course inspection remain pending.
 
+### REUSE-1.3 matrix planning and base credits
+
+The student asked Codex to continue after committed REUSE-1.2 (`ff38a40`). This episode covers SC-04: compare the baseline, residual and covering matrix plans, dispatch the selected rectangles through the loopback adapter, and preserve settled trip and workspace values when the selected plan refetches them. Scope ends before REUSE-1.4 evidence versions and display. Independent student inspection is pending.
+
+| Synthetic 20-driver, 50-passenger case | P0 baseline | P1 residual | P2 covering | Loopback dispatch |
+|---|---:|---:|---:|---|
+| One scattered workspace hit per driver | 400 | 500 | 500 | P0, 16×20 and 4×50 |
+| Coordinate reuse with no workspace hits | 424 | 500 | 520 | P0, 14×26, 6×24 and 20×1 |
+| Same two workspace hits per driver | 500 | 480 | 480 | P1, 20×48 |
+| Fragmented workspace hits | 500 | 546 | 400 | P2, 14×40 |
+
+The tests compute reported credits independently from the source and target counts received by the loopback server and assert that every miss was sent. With the chosen baseline and covering plans, the server deliberately returns a different value for refetched cells. The matched input keeps the prior trip or workspace observation, including confirmed no-route and original timestamps. The fresh value only goes to the optional persistence callback. A fully covered service preview records zero planned credits and takes no routing permit. These are predictions of base credits under the [Geoapify matrix pricing formula](https://apidocs.geoapify.com/docs/route-matrix/#pricing). The tests make zero live Geoapify requests. [SC-04 loopback tests](../tests/concurrency/geoapify.integration.test.ts) · [Planner](../src/routing/matrix.ts)
+
+On Node 24, `npm run test:concurrency -- geoapify -t SC-04` passed all four selected cases. The full `npm run test:concurrency` run passed 337 PostgreSQL tests. `npm run test:e2e` built the production app and passed all 51 Chromium workflows. Lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed. Durable metrics and owner-facing display remain assigned to REUSE-1.4.
+
+### Independent review of the SC-04 credit bound
+
+Reviewed the uncommitted REUSE-1.3 diff over `ff38a40`. Lint, typecheck and all 83 Geoapify integration cases passed, including the four submitted SC-04 distributions. An additional preview through the production trip service and counting loopback adapter reproduced ISSUE-131 on the designated PostgreSQL test database. Workspace reuse was disabled. The full 337-test PostgreSQL and 51-workflow Chromium results above are from the implementation run.
+
+The probe created the following history with fictional registrations, seat edits and successful intermediate previews.
+
+1. Preview 13 drivers with one temporary passenger. Reduce seven drivers to zero seats, register passenger X, and preview again. Six of the 13 drivers now have a trip observation to X.
+2. Reduce those six drivers to zero seats too. Register six more drivers and 13 more passengers at distinct pickups. Preview with those six drivers offering seats.
+3. Withdraw the temporary passenger, reselect X at the same coordinates with a fresh location ID, and register two pickups, one at the venue and one at a new location. Register the twentieth driver and restore the original 13 drivers' seats. The final roster has 20 drivers and 16 active passengers.
+4. Read the previous preview's ID-keyed evidence from PostgreSQL. Remove ID hits and identical endpoints from the final roster's required pairs and pass the remainder to the unmodified batcher from the design pivot (`dc2080a:src/routing/matrix.ts`). Compare its shapes with the actual HTTP requests from the final preview.
+
+| Path | Sources × targets | Predicted base credits |
+|---|---|---:|
+| Pre-reuse baseline | 14×16, 6×3, 3×1 | 181 |
+| Selected P0, observed on loopback | 13×16, 1×15, 6×3, 3×1 | 196 |
+
+The final preview succeeded. Its telemetry agreed with the loopback server on all four rectangles and 244 physical cells. The extra 15 credits come from removing the venue pickup from just one driver's pickup row, which splits the original 14×16 batch. The original batcher assigned each destination to its family by location ID. P0 now uses the coordinate-based family rule introduced with ISSUE-123. Restore the original P0 request shapes and keep the single directed observation when decoding overlapping cells. Add this case to SC-04 and retain the cold/warm shared-venue check. No live Geoapify requests ran. [P0 construction](../src/routing/matrix.ts) · [Provider base pricing](https://apidocs.geoapify.com/docs/route-matrix/#pricing)
+
+### REUSE-1.3 shared-venue credit baseline correction
+
+The student asked Codex to address ISSUE-131 on the REUSE-1.3 working diff over `ff38a40` and hold checkpoint signoff. The bounded work restores pre-reuse destination-ID grouping for P0 and verifies that overlapping rectangles still produce one logical observation per directed coordinate pair. Independent review is pending.
+
+The production-service regression rebuilds the 20-driver, 16-passenger roster using fictional registrations, intermediate previews, a pickup reselection, and seat edits. Workspace reuse is disabled. Before the fix, the loopback received four rectangles priced at 196 base credits. After the fix it received 14×16, 6×3 and 3×1, priced at 181 base credits for 245 physical cells. The production telemetry matched those request shapes and the price. The stub answered 60 and 180 seconds for the overlapping directed cell. Both logical legs retained the first 60-second observation and the same timestamp. Save and reload preserved the result.
+
+`npm run test:concurrency -- geoapify -t 'SC-04|ISSUE-123'` passed all six selected cases, including the new regression, all four earlier credit cases, and the earlier shared-venue cold/warm case. Lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed. All routing used the loopback provider. [Regression](../tests/concurrency/geoapify.integration.test.ts) · [Baseline grouping](../src/routing/matrix.ts)
+
+The final `npm run test:concurrency` run passed all 338 PostgreSQL tests. `npm run test:e2e` built the production app and passed all 51 Chromium workflows. Verification used the designated test database and zero live Geoapify requests.
+
+### Independent review of the shared-venue correction
+
+Reviewed the REUSE-1.3 working diff over `ff38a40`. The original 20-driver, 16-passenger probe dispatched 14×16, 6×3 and 3×1 in both reruns. The three requests matched the batcher from `dc2080a`, with 245 physical cells and 181 predicted base credits. For the overlapping directed cell the loopback server first returned a confirmed no-route and then 67 seconds. A second run reversed the replies. Both logical legs retained the first observation and the same timestamp in each run. Save and reload preserved 16 assignments and 1,800 total seconds in each case. ISSUE-131 remains closed.
+
+An offline differential check compared P0 with the original batcher on 1,500 deterministic rosters with mixed ID hits, co-located endpoints and varied roster sizes up to 20 drivers and 50 passengers. Given the same baseline input, the complete batches matched in every case. Every remaining miss had an output index for the correct directed cell. The selected price stayed within the original batcher's prediction on these inputs.
+
+**ISSUE-132.** A separate service probe on real PostgreSQL found a difference in the input passed to P0 across requests. Workspace reuse was disabled and every completed loopback cell returned 120 seconds. To reproduce:
+
+1. Publish a preview for 12 drivers and 12 passengers at distinct locations. Set six drivers to zero seats, add pickup X, and start a preview. Let its six driver-to-X cells settle, then hold the venue reply.
+2. Reselect X at identical coordinates under a fresh location ID. Restore the six drivers' seats, add two drivers and 11 other pickups. The previous published evidence and the six settled observations at X's old ID are the only provider evidence available.
+3. For the control, change one driver's capacity to two and start the final preview. For the overlapping case, first start a preview after the reselection. Hold its first matrix reply, then make the same capacity change and start the final preview. Each superseded caller returned 409 STALE_VERSION. The intermediate caller received zero new cells.
+
+| Final successful dispatch only | Rectangles received on loopback | Predicted base credits | Passengers matched |
+|---|---|---:|---:|
+| Direct handoff | 12×12, 2×24, 14×1 | 182 | 15 |
+| Handoff through the stalled intermediate preview | 6×11, 6×12, 2×24, 14×1 | 200 | 15 |
+
+Independently applying the design-pivot batcher to the final ID misses produced 182 in both runs. The six settled legs reference X's old ID. The intermediate caller copies them to the new ID by coordinates and passes those copies through its settled map. The final caller adds every retained key from that map to `baselineKnown`, so the 12-driver pickup rectangle splits. Its telemetry selected P1 at 200. Keep the coordinate copies available for matching while carrying enough information through successive handoffs to price P0 from genuine ID hits. [Handoff merge](../src/trips/preview.ts) · [Matrix planner](../src/routing/matrix.ts)
+
+Independent verification passed all 338 PostgreSQL tests, lint and typecheck. The production build, 51 Chromium workflows, unit, matching and setup totals above belong to the implementation run. This review made zero live provider requests.
+
+### REUSE-1.3 handoff credit baseline correction
+
+The student asked Codex to address ISSUE-132 on the working diff over `ff38a40` and keep REUSE-1.3 open. The work covers the direct and overlapping handoff schedules and the eligibility of coordinate copies when pricing the pre-reuse baseline. Independent signoff is pending.
+
+The regression recreates the reported seat edits and pickup reselection on PostgreSQL with workspace reuse disabled. The first superseded preview settles six pickup observations and stalls on the venue response. The intermediate preview, when present, stalls before receiving any matrix results. Before the fix, the direct schedule passed at 182 credits and the intermediate schedule reproduced 200. After the fix, both final previews sent 12×12, 2×24 and 14×1, totaling 182 predicted base credits and 206 physical cells. Both kept all six coordinate copies for matching and saved and reloaded 15 riders at 1,800 total seconds. Superseded callers returned 409.
+
+Coordinate copies are marked in memory so successive handoff maps preserve the distinction from direct ID observations. The v2 evidence format is unchanged. `npm run test:concurrency -- geoapify -t 'SC-04|ISSUE-123'` passed all eight selected cases, including ISSUE-131 and the earlier shared-venue regression. Lint, typecheck, 471 unit tests, 71 matching tests and two setup checks passed. Verification used the designated test database and zero live Geoapify requests. [Regression](../tests/concurrency/geoapify.integration.test.ts) · [Copy eligibility](../src/trips/travel-times.ts)
+
+The full `npm run test:concurrency` run passed all 340 PostgreSQL tests. `npm run test:e2e` built the production app and passed all 51 Chromium workflows on the designated test database.
+
+### Independent signoff on the ISSUE-132 correction
+
+Reviewed the REUSE-1.3 working diff over `ff38a40`. The Geoapify suite passed all 86 cases on the designated PostgreSQL test database. Both submitted ISSUE-132 schedules dispatched 12×12, 2×24 and 14×1, totaling 182 predicted base credits, and saved and reloaded 15 riders at 1,800 seconds. Lint and typecheck passed. The full 340-test PostgreSQL run, production build and 51 Chromium workflows above are from the implementation run.
+
+Two additional temporary variants of the [handoff regression](../tests/concurrency/geoapify.integration.test.ts) gave the original six driver-to-pickup observations a duration of 60 seconds and every subsequent provider cell 120 seconds. One used the direct handoff. The other stalled two successive intermediate previews before their first replies, changing the first driver's capacity to three between those previews and to two for the final preview. Both dispatched the same 182-credit rectangles and reloaded 15 riders at 1,740 seconds. Each superseded caller returned 409. The lower saved cost distinguishes a retained observation from its 120-second refetch. The checked-in ISSUE-132 cases use uniform durations, so they verify the request shapes and reuse counts directly. Using distinct durations there would also retain this value-precedence check. All routing ran on loopback with zero live requests.
+
+REUSE-1.3 passed independent technical review. The next checkpoint is REUSE-1.4. Student course inspection remains pending.
+
 ## Checkpoint D pilot preparation
 
 The student asked Codex to proceed from committed C (`2b50353`). This episode covers D1 attribution on suggestions, previews and saved estimates, and preparing the Geoapify search path against fictional provider responses. Live L-19 measurements depend on the owner’s L-18 project and credit confirmation. Student inspection is pending.

@@ -26,6 +26,14 @@ type Observation = { pair: DirectedPair; leg: Leg };
 const idKey = ({ from, to }: DirectedPair) => legKey(from.id, to.id);
 const pointKey = ({ from, to }: DirectedPair) => legKey(coordinateKey(from), coordinateKey(to));
 
+// Handoff maps share these leg objects until publication. Track the copied
+// legs without changing the stored evidence schema or their public shape.
+const coordinateCopies = new WeakSet<Leg>();
+
+export function isCoordinateCopy(leg: Leg): boolean {
+  return coordinateCopies.has(leg);
+}
+
 export function missingTravelPairs(required: readonly DirectedPair[], legs: ReadonlyMap<string, Leg>) {
   return required.filter(pair => !legs.has(idKey(pair)) && !identicalCoordinates(pair.from, pair.to));
 }
@@ -51,7 +59,10 @@ export function reuseTripCoordinates(
   }
   for (const pair of missingTravelPairs(retained, legs)) {
     const observation = observations.get(pointKey(pair));
-    if (observation) legs.set(idKey(pair), { ...observation, from: pair.from.id, to: pair.to.id });
+    if (!observation) continue;
+    const copy = { ...observation, from: pair.from.id, to: pair.to.id };
+    coordinateCopies.add(copy);
+    legs.set(idKey(pair), copy);
   }
 }
 

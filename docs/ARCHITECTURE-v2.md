@@ -725,7 +725,7 @@ ON CONFLICT (workspace_id, routing_policy, from_point, to_point) DO UPDATE
 
 **REUSE-1.2 implementation boundary.** The production workspace store is enabled for fictional fixture trips. The counting loopback Geoapify adapter can exercise it only through the test adapter seam on the designated test database. The default Geoapify adapter has no cross-trip store access. Fixture freshness defaults to 30 days and `GROUPRIDE_TRAVEL_TIMES_MAX_AGE_DAYS` accepts integers from 0 through 365. Zero or an invalid setting disables shared reads and writes. Fixture startup attempts bounded cleanup with a temporary pool. The optional write also runs bounded cleanup. Workspace writes recheck the session and trip owner after comparing the captured dataset generation.
 
-The checkpoint retains the evidence-v2 and summary formats for stored plans. The fixture and loopback checks use the existing aggregate reuse count. Three-plan credit comparison, explicit origins and owner-only summary projection follow in REUSE-1.3 and REUSE-1.4.
+REUSE-1.3 retains the existing evidence and summary formats and their aggregate reuse count. Explicit origins, durable matrix metrics and owner-only summary projection follow in REUSE-1.4.
 
 ### 13.7 Credit-guaranteed request planning
 
@@ -733,16 +733,17 @@ The planner resolves the remaining required pairs into three candidate request p
 
 | Plan | Fetches | Purpose |
 |---|---|---|
-| **P0 · Today's plan** | The pairs left after **steps 1 and 3 only** (ID matches and identical endpoints), batched by today's `matrixBatches`. Neither coordinate reuse (step 2) nor the store (step 4) is applied. This is exactly what GroupRide sends today. | Defines the guarantee |
+| **P0 · Pre-reuse baseline** | The pairs left after **steps 1 and 3 only** (ID matches and identical endpoints), grouped by destination ID into pickup and venue rectangles as in the design-pivot batcher. Neither coordinate reuse (step 2) nor the store (step 4) is applied. | Defines the guarantee |
 | **P1 · Residual** | The pairs left after steps 1–4 | Cheapest when hits are aligned |
-| **P2 · Covering** | The covering rectangle of each P1 batch family | Avoids fragmentation |
+| **P2 · Covering** | The Cartesian product of remaining physical sources and targets in each family (pickups and venue). Split source rows to keep every request at or below 1,000 cells. | Avoids fragmentation |
 
 - **Choice.** The plan with the lowest predicted base credits is sent. On a tie, the order of preference is P1, P2, P0.
 - **Guarantee.** Because P0 is always a candidate, predicted base credits never exceed today's. Two reviewed counterexamples show why P0 must be computed before **any** new reuse:
   - 16 drivers missing the same 20 pickups plus 4 missing all 50 cost **400** under P0. One scattered store hit per driver raises both P1 and P2 to **500**.
   - On a roster where today's batches cost **424**, coordinate reuse alone fragments the rows, giving 500 for the residual and 520 for the covering plan, even with an empty store. Revision 3 applied step 2 before P0 and so lost this case (X1).
-- **Precedence.** When P0 or P2 refetches cells already resolved by step 2 or step 4, those legs keep their resolved origin and value (`trip` or `store`). That keeps co-located estimates consistent. The fresh cells only refresh the store.
-- **Prediction recorded.** The chosen plan's predicted credits are logged per preview, and the summary records them as physical cells and predicted credits (13.8).
+  - For 20 drivers and 16 active pickups, one of them at the venue, moving the shared cell into the venue family would split the baseline pickup rectangle and raise the prediction from **181** to **196** credits (ISSUE-131).
+- **Precedence.** When P0 or P2 refetches a resolved leg, that leg keeps its previous value and timestamp in the preview. The fresh result can refresh the eligible workspace store. When P0 sends a directed coordinate pair twice, the first cell supplies every logical alias. Later copies and padding are decoded and counted for pricing without creating another logical observation. A coordinate copy made by an in-flight preview stays eligible for matching across handoffs. Until that observation appears in published evidence, the copy stays outside P0's ID hits, even when the next preview sees the copied key directly.
+- **Prediction recorded.** REUSE-1.3 passes the selected plan's exact rectangles to the Geoapify adapter and records the plan, shapes, physical cells and predicted base credits in the existing opt-in evaluation telemetry. Its prediction uses Geoapify's [base matrix formula](https://apidocs.geoapify.com/docs/route-matrix/#pricing) and excludes distance surcharges. Fully covered previews record zero cells and credits. Fixture routing keeps its existing offline lookup. Section 13.8 defines durable metrics and public projection for REUSE-1.4.
 
 ### 13.8 Summary, provenance and validation
 

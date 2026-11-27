@@ -123,7 +123,7 @@ The first search creates an owner-only (`0700`/`0600`) signing secret at `.group
 
 For the verified expectations, try Event Hall (venue), a driver starting at *Driver Start Delta* and a passenger at *Pickup Alpha*: Delta→Alpha 403 s + Alpha→Hall 346 s − Delta→Hall 519 s = **230 s**, shown as “3 min 50 s”. Costs on an address trip are estimated extra driving seconds, labelled as the sum of individual pickup detours; zone trips keep their synthetic cost units.
 
-After the first preview, later previews of the same trip **reuse the earlier driving times** and fetch only the legs still missing (the estimate reports how many were `fetched`, `reused` and `local`). A cancellation, withdrawal or seat change usually needs nothing new, and a driver who offers no seats keeps their earlier observations in case capacity returns. If a preview needs a leg it does not have while routing is unavailable, it returns `503 ROUTING_UNAVAILABLE` and publishes nothing; a preview whose legs are all known still works. Saved plans, stored previews and commits never need routing.
+After the first preview, later previews of the same trip **reuse the earlier driving times**. The estimate reports logical legs filled by routing, reused from previous observations, or resolved locally. A Geoapify request can include already-known cells if that rectangle costs fewer predicted base credits. The preview keeps the original observations for those legs. A cancellation, withdrawal or seat change usually needs nothing new, and a driver who offers no seats keeps their earlier observations in case capacity returns. If routing is unavailable and a required leg is missing, the preview returns `503 ROUTING_UNAVAILABLE` and publishes nothing. Fully covered previews, saved plans and commits work without routing.
 
 Verified commands for this checkpoint (Node 24, the local test database): `npm run lint`, `npm run typecheck`, `npm run test:matching`, `npm run test:unit`, `npm run test:concurrency`, `npm run test:e2e`. [L-01–L-04 evidence](docs/EVIDENCE.md#checkpoint-a-closeout) · [L-05–L-12 evidence](docs/EVIDENCE.md#checkpoint-b-closeout)
 
@@ -184,6 +184,8 @@ The browser probe starts a local production app and a counting autocomplete prov
 Use the offline fixture provider to try workspace reuse. In the same organizer browser, create two trips with the same fictional venue, driver start and pickup. Preview the first to record driving times. Preview the second to reuse those observations. Set `GROUPRIDE_TRAVEL_TIMES_MAX_AGE_DAYS=0` to disable the workspace store. The fixture default is 30 days. Live cross-trip Geoapify storage remains gated by the owner’s retention decision.
 
 Run `npm run test:concurrency -- travel-times geoapify address-reset-upgrade` with the designated test database free to check reusable estimates, roster edits, preview deadlines and bounded cleanup. It uses the offline fixtures and a counting loopback provider.
+
+Run `npm run test:concurrency -- geoapify -t SC-04` to verify which matrix rectangles are sent and reproduce the base-credit comparisons locally. [SC-04 results](docs/EVIDENCE.md#reuse-13-matrix-planning-and-base-credits)
 
 On an existing experimental-branch database, stop the app and run `npm run db:migrate` before restarting. Migration 009 preserves saved plans and establishes the version from which each existing registration's address history can be verified. A later rematch may need a fresh estimate if the previous preview predates that history.
 
